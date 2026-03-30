@@ -1,0 +1,10 @@
+{
+  "meetings": [
+    {
+      "name": "ret",
+      "url": "https://meet.google.com/ewh-cpbo-nhn",
+      "schedule": "09:00",
+      "enabled": true
+    }
+  ]
+}
