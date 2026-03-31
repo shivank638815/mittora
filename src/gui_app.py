@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QPushButton, QLabel, QLineEdit, QSpinBox, QCheckBox,
     QTimeEdit, QTableWidget, QTableWidgetItem, QDialog, QFormLayout,
     QTextEdit, QSystemTrayIcon, QMenu, QMessageBox, QHeaderView,
-    QFileDialog
+    QFileDialog, QScrollArea, QComboBox, QSlider, QGroupBox, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QTime
 from PySide6.QtGui import QIcon, QAction
@@ -244,34 +244,364 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """Initialize the main UI"""
         self.setWindowTitle('AutoMeet Attender')
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(960, 740)
+        
+        # Apply premium theme
+        self._apply_premium_theme()
         
         # Central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         central_widget.setLayout(main_layout)
         
-        # Header
-        header = QLabel('🤖 AutoMeet Attender')
-        header.setStyleSheet('font-size: 24px; font-weight: bold; padding: 20px;')
-        header.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(header)
+        # Header bar
+        header_bar = QFrame()
+        header_bar.setObjectName('headerBar')
+        header_bar.setFixedHeight(72)
+        header_layout = QHBoxLayout(header_bar)
+        header_layout.setContentsMargins(28, 0, 28, 0)
+        
+        header = QLabel('AutoMeet Attender')
+        header.setObjectName('appTitle')
+        header_layout.addWidget(header)
+        
+        header_layout.addStretch()
+        
+        version_label = QLabel('v2.0')
+        version_label.setObjectName('versionLabel')
+        header_layout.addWidget(version_label)
+        
+        main_layout.addWidget(header_bar)
+        
+        # Content area
+        content_widget = QWidget()
+        content_widget.setObjectName('contentArea')
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 16, 16, 16)
         
         # Tabs
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.create_meetings_tab(), '📅 Meetings')
-        self.tabs.addTab(self.create_quick_join_tab(), '🚀 Quick Join')
-        self.tabs.addTab(self.create_settings_tab(), '⚙️ Settings')
-        main_layout.addWidget(self.tabs)
+        self.tabs.setObjectName('mainTabs')
+        self.tabs.addTab(self.create_meetings_tab(), '📅  Meetings')
+        self.tabs.addTab(self.create_quick_join_tab(), '🚀  Quick Join')
+        self.tabs.addTab(self.create_settings_tab(), '⚙️  Settings')
+        self.tabs.addTab(self.create_ai_pipeline_tab(), '🧠  AI Pipeline')
+        content_layout.addWidget(self.tabs)
+        
+        main_layout.addWidget(content_widget)
         
         # Status bar
-        self.status_label = QLabel('Ready')
+        self.status_label = QLabel('  Ready')
         self.statusBar().addWidget(self.status_label)
         
-        self.meeting_count_label = QLabel('0 meetings scheduled')
+        self.meeting_count_label = QLabel('0 meetings scheduled  ')
         self.statusBar().addPermanentWidget(self.meeting_count_label)
+    
+    def _apply_premium_theme(self):
+        """Apply a polished dark theme with modern design tokens."""
+        self.setStyleSheet("""
+            /* === Base === */
+            QMainWindow {
+                background-color: #0f1117;
+                color: #e1e4eb;
+                font-family: 'Segoe UI', 'Inter', sans-serif;
+                font-size: 13px;
+            }
+            
+            /* === Header Bar === */
+            QFrame#headerBar {
+                background-color: #161822;
+                border-bottom: 1px solid #252836;
+            }
+            QLabel#appTitle {
+                font-size: 20px;
+                font-weight: 700;
+                color: #f0f2f7;
+                letter-spacing: 0.5px;
+            }
+            QLabel#versionLabel {
+                font-size: 11px;
+                color: #565b6e;
+                padding: 4px 10px;
+                background: #1c1f2e;
+                border-radius: 8px;
+            }
+            
+            /* === Content === */
+            QWidget#contentArea {
+                background-color: #0f1117;
+            }
+            
+            /* === Tabs === */
+            QTabWidget::pane {
+                border: 1px solid #252836;
+                border-radius: 10px;
+                background-color: #161822;
+                padding: 8px;
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: #7a7f94;
+                padding: 10px 22px;
+                margin-right: 4px;
+                border-radius: 8px 8px 0px 0px;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            QTabBar::tab:selected {
+                background: #161822;
+                color: #f0f2f7;
+                border-bottom: 2px solid #3b82f6;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #1c1f2e;
+                color: #c0c4d4;
+            }
+            
+            /* === GroupBox === */
+            QGroupBox {
+                font-size: 14px;
+                font-weight: 600;
+                color: #c0c4d4;
+                border: 1px solid #252836;
+                border-radius: 10px;
+                margin-top: 18px;
+                padding-top: 24px;
+                background-color: #1c1f2e;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 4px 14px;
+                left: 16px;
+                background-color: #252836;
+                border-radius: 6px;
+                color: #e1e4eb;
+            }
+            
+            /* === Inputs === */
+            QLineEdit, QSpinBox, QComboBox, QTimeEdit {
+                background-color: #1c1f2e;
+                border: 1px solid #303448;
+                border-radius: 8px;
+                padding: 8px 14px;
+                color: #e1e4eb;
+                font-size: 13px;
+                selection-background-color: #3b82f6;
+                min-height: 20px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTimeEdit:focus {
+                border-color: #3b82f6;
+                background-color: #21243a;
+            }
+            QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+                background-color: #13151d;
+                color: #4a4e5e;
+                border-color: #1e2130;
+            }
+            QComboBox::drop-down {
+                border: none;
+                padding-right: 10px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1c1f2e;
+                color: #e1e4eb;
+                border: 1px solid #303448;
+                selection-background-color: #3b82f6;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            
+            /* === Buttons === */
+            QPushButton {
+                background-color: #252836;
+                color: #e1e4eb;
+                border: 1px solid #303448;
+                border-radius: 8px;
+                padding: 9px 20px;
+                font-weight: 500;
+                font-size: 13px;
+                min-height: 18px;
+            }
+            QPushButton:hover {
+                background-color: #303448;
+                border-color: #3b82f6;
+            }
+            QPushButton:pressed {
+                background-color: #3b82f6;
+                color: white;
+            }
+            QPushButton#primaryBtn {
+                background-color: #3b82f6;
+                border: none;
+                color: white;
+                font-weight: 600;
+            }
+            QPushButton#primaryBtn:hover {
+                background-color: #2563eb;
+            }
+            QPushButton#primaryBtn:pressed {
+                background-color: #1d4ed8;
+            }
+            QPushButton#dangerBtn {
+                background-color: #dc2626;
+                border: none;
+                color: white;
+                font-weight: 600;
+            }
+            QPushButton#dangerBtn:hover {
+                background-color: #b91c1c;
+            }
+            QPushButton#successBtn {
+                background-color: #16a34a;
+                border: none;
+                color: white;
+                font-weight: 600;
+            }
+            QPushButton#successBtn:hover {
+                background-color: #15803d;
+            }
+            
+            /* === Checkbox === */
+            QCheckBox {
+                color: #c0c4d4;
+                spacing: 8px;
+                font-size: 13px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #303448;
+                border-radius: 4px;
+                background-color: #1c1f2e;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #3b82f6;
+                border-color: #3b82f6;
+            }
+            
+            /* === Table === */
+            QTableWidget {
+                background-color: #161822;
+                border: 1px solid #252836;
+                border-radius: 8px;
+                gridline-color: #252836;
+                color: #e1e4eb;
+                font-size: 13px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+            }
+            QTableWidget::item:selected {
+                background-color: #252e4a;
+                color: #f0f2f7;
+            }
+            QHeaderView::section {
+                background-color: #1c1f2e;
+                color: #7a7f94;
+                border: none;
+                border-bottom: 1px solid #252836;
+                padding: 10px 8px;
+                font-weight: 600;
+                font-size: 12px;
+                text-transform: uppercase;
+            }
+            
+            /* === TextEdit (Log) === */
+            QTextEdit {
+                background-color: #0f1117;
+                border: 1px solid #252836;
+                border-radius: 8px;
+                color: #a0a7b8;
+                font-family: 'Cascadia Code', 'Consolas', monospace;
+                font-size: 12px;
+                padding: 8px;
+            }
+            
+            /* === ScrollBar === */
+            QScrollBar:vertical {
+                background: #0f1117;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #303448;
+                border-radius: 4px;
+                min-height: 32px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #3b82f6;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            
+            /* === Slider === */
+            QSlider::groove:horizontal {
+                background: #252836;
+                height: 6px;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #3b82f6;
+                width: 18px;
+                height: 18px;
+                margin: -6px 0;
+                border-radius: 9px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #2563eb;
+            }
+            QSlider::sub-page:horizontal {
+                background: #3b82f6;
+                border-radius: 3px;
+            }
+            
+            /* === StatusBar === */
+            QStatusBar {
+                background-color: #161822;
+                color: #565b6e;
+                border-top: 1px solid #252836;
+                font-size: 12px;
+            }
+            
+            /* === Labels === */
+            QLabel {
+                color: #c0c4d4;
+            }
+            QLabel#sectionTitle {
+                font-size: 15px;
+                font-weight: 600;
+                color: #e1e4eb;
+            }
+            QLabel#sectionDesc {
+                font-size: 12px;
+                color: #565b6e;
+            }
+            QLabel#fieldHint {
+                font-size: 11px;
+                color: #4a5068;
+                font-style: italic;
+            }
+            QLabel#statusActive {
+                color: #22c55e;
+                font-weight: 600;
+            }
+            QLabel#statusInactive {
+                color: #ef4444;
+                font-weight: 600;
+            }
+            
+            /* === Frame Separator === */
+            QFrame#separator {
+                background-color: #252836;
+                max-height: 1px;
+            }
+        """)
     
     def init_storage_folders(self):
         """Initialize storage folders for chat logs and screenshots"""
@@ -371,110 +701,341 @@ class MainWindow(QMainWindow):
         return widget
     
     def create_settings_tab(self):
-        """Create the settings tab"""
+        """Create the settings tab with premium design."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        
         widget = QWidget()
         layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignTop)
+        layout.setSpacing(16)
+        layout.setContentsMargins(12, 12, 12, 24)
         
-        # Authentication section
-        auth_group = QLabel('Authentication')
-        auth_group.setStyleSheet('font-size: 14px; font-weight: bold;')
+        # === Auth Section ===
+        auth_group = QGroupBox('🔐  Authentication')
+        auth_layout = QVBoxLayout()
+        auth_layout.setSpacing(12)
+        auth_layout.setContentsMargins(16, 16, 16, 16)
+        
+        setup_btn = QPushButton('Run Google Authentication')
+        setup_btn.setObjectName('primaryBtn')
+        setup_btn.setMinimumHeight(40)
+        setup_btn.clicked.connect(self.run_setup)
+        auth_layout.addWidget(setup_btn)
+        
+        auth_group.setLayout(auth_layout)
         layout.addWidget(auth_group)
         
-        setup_btn = QPushButton('🔐 Run Setup / Re-authenticate')
-        setup_btn.clicked.connect(self.run_setup)
-        layout.addWidget(setup_btn)
-        
-        layout.addSpacing(20)
-        
-        # Configuration section
-        config_group = QLabel('Meeting Configuration')
-        config_group.setStyleSheet('font-size: 14px; font-weight: bold;')
-        layout.addWidget(config_group)
-        
-        form_layout = QFormLayout()
+        # === Meeting Config Section ===
+        meet_group = QGroupBox('📋  Meeting Configuration')
+        meet_layout = QFormLayout()
+        meet_layout.setSpacing(12)
+        meet_layout.setContentsMargins(16, 16, 16, 16)
+        meet_layout.setLabelAlignment(Qt.AlignRight)
         
         self.headless_checkbox = QCheckBox('Run browser in headless mode (hidden)')
-        form_layout.addRow('', self.headless_checkbox)
+        meet_layout.addRow('', self.headless_checkbox)
         
         self.solo_timeout_input = QSpinBox()
         self.solo_timeout_input.setRange(1, 60)
         self.solo_timeout_input.setValue(8)
-        self.solo_timeout_input.setSuffix(' minutes')
-        self.solo_timeout_input.setToolTip('If AutoMeet is alone in the meeting for this many minutes, it will leave.')
-        form_layout.addRow('Solo Timeout:', self.solo_timeout_input)
+        self.solo_timeout_input.setSuffix(' min')
+        self.solo_timeout_input.setToolTip('If AutoMeet is alone for this long, it will leave.')
+        meet_layout.addRow('Solo Timeout:', self.solo_timeout_input)
 
         self.max_meeting_minutes_input = QSpinBox()
         self.max_meeting_minutes_input.setRange(5, 480)
         self.max_meeting_minutes_input.setValue(240)
-        self.max_meeting_minutes_input.setSuffix(' minutes')
-        self.max_meeting_minutes_input.setToolTip('Safety cap to avoid staying in meetings indefinitely.')
-        form_layout.addRow('Max Meeting Length:', self.max_meeting_minutes_input)
+        self.max_meeting_minutes_input.setSuffix(' min')
+        self.max_meeting_minutes_input.setToolTip('Safety cap to avoid infinite meetings.')
+        meet_layout.addRow('Max Duration:', self.max_meeting_minutes_input)
         
         self.max_retries_input = QSpinBox()
         self.max_retries_input.setRange(1, 10)
         self.max_retries_input.setValue(3)
-        form_layout.addRow('Max Retry Attempts:', self.max_retries_input)
+        meet_layout.addRow('Max Retries:', self.max_retries_input)
         
         self.retry_delay_input = QSpinBox()
         self.retry_delay_input.setRange(5, 120)
         self.retry_delay_input.setValue(30)
-        self.retry_delay_input.setSuffix(' seconds')
-        form_layout.addRow('Retry Delay:', self.retry_delay_input)
+        self.retry_delay_input.setSuffix(' sec')
+        meet_layout.addRow('Retry Delay:', self.retry_delay_input)
         
         self.greeting_input = QLineEdit()
         self.greeting_input.setPlaceholderText('Hello everyone')
-        form_layout.addRow('Greeting Message:', self.greeting_input)
+        meet_layout.addRow('Greeting:', self.greeting_input)
         
         self.screenshot_threshold_input = QSpinBox()
         self.screenshot_threshold_input.setRange(1, 20)
         self.screenshot_threshold_input.setValue(5)
-        self.screenshot_threshold_input.setToolTip('Lower = more sensitive (more screenshots), Higher = less sensitive (fewer screenshots)')
-        form_layout.addRow('Screenshot Sensitivity:', self.screenshot_threshold_input)
+        self.screenshot_threshold_input.setToolTip('Lower = more screenshots, Higher = fewer')
+        meet_layout.addRow('Screenshot Sensitivity:', self.screenshot_threshold_input)
         
-        sensitivity_help = QLabel('Perceptual hash threshold (1-20). Lower values capture more changes.')
-        sensitivity_help.setStyleSheet('color: gray; font-size: 10px;')
-        form_layout.addRow('', sensitivity_help)
+        hint = QLabel('Hash threshold (1-20). Lower values capture more screen changes.')
+        hint.setObjectName('fieldHint')
+        meet_layout.addRow('', hint)
         
-        layout.addLayout(form_layout)
+        meet_group.setLayout(meet_layout)
+        layout.addWidget(meet_group)
         
-        layout.addSpacing(20)
+        # === Storage Section ===
+        storage_group = QGroupBox('📁  Storage Location')
+        storage_layout = QVBoxLayout()
+        storage_layout.setSpacing(10)
+        storage_layout.setContentsMargins(16, 16, 16, 16)
         
-        # Storage location section
-        storage_group = QLabel('Storage Location')
-        storage_group.setStyleSheet('font-size: 14px; font-weight: bold;')
+        desc = QLabel('Where to save chat logs, screenshots and audio recordings')
+        desc.setObjectName('sectionDesc')
+        storage_layout.addWidget(desc)
+        
+        path_row = QHBoxLayout()
+        self.storage_path_input = QLineEdit()
+        self.storage_path_input.setPlaceholderText('Select folder...')
+        self.storage_path_input.setReadOnly(True)
+        path_row.addWidget(self.storage_path_input)
+        
+        browse_btn = QPushButton('Browse')
+        browse_btn.setFixedWidth(90)
+        browse_btn.clicked.connect(self.browse_storage_folder)
+        path_row.addWidget(browse_btn)
+        
+        storage_layout.addLayout(path_row)
+        storage_group.setLayout(storage_layout)
         layout.addWidget(storage_group)
         
-        storage_desc = QLabel('Choose where to save chat logs and screenshots')
-        storage_desc.setStyleSheet('color: gray; font-size: 10px;')
-        layout.addWidget(storage_desc)
-        
-        storage_layout = QHBoxLayout()
-        self.storage_path_input = QLineEdit()
-        self.storage_path_input.setPlaceholderText('Select folder for logs and screenshots')
-        self.storage_path_input.setReadOnly(True)
-        storage_layout.addWidget(self.storage_path_input)
-        
-        browse_btn = QPushButton('📁 Browse')
-        browse_btn.clicked.connect(self.browse_storage_folder)
-        storage_layout.addWidget(browse_btn)
-        
-        layout.addLayout(storage_layout)
-        
-        storage_info = QLabel('Folders "All_Chatlogs" and "Screenshots" will be created automatically')
-        storage_info.setStyleSheet('color: gray; font-size: 10px; font-style: italic;')
-        layout.addWidget(storage_info)
-        
-        layout.addSpacing(10)
-        
-        save_settings_btn = QPushButton('💾 Save Settings')
-        save_settings_btn.clicked.connect(self.save_settings)
-        layout.addWidget(save_settings_btn)
+        # === Save Button ===
+        save_btn = QPushButton('💾  Save All Settings')
+        save_btn.setObjectName('successBtn')
+        save_btn.setMinimumHeight(44)
+        save_btn.clicked.connect(self.save_settings)
+        layout.addWidget(save_btn)
         
         layout.addStretch()
         
         widget.setLayout(layout)
-        return widget
+        scroll.setWidget(widget)
+        return scroll
+    
+    def create_ai_pipeline_tab(self):
+        """Create the AI Pipeline configuration tab — profile & credentials."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        layout.setContentsMargins(12, 12, 12, 24)
+        
+        # === Master Toggle ===
+        toggle_group = QGroupBox('⚡  Pipeline Status')
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(16, 16, 16, 16)
+        
+        self.ai_enabled_checkbox = QCheckBox('Enable AI Pipeline')
+        self.ai_enabled_checkbox.setToolTip('Master switch — when off, Mittora works normally without AI features.')
+        toggle_layout.addWidget(self.ai_enabled_checkbox)
+        
+        toggle_layout.addStretch()
+        
+        self.ai_status_label = QLabel('● Inactive')
+        self.ai_status_label.setObjectName('statusInactive')
+        toggle_layout.addWidget(self.ai_status_label)
+        
+        self.ai_enabled_checkbox.toggled.connect(self._on_ai_toggle)
+        
+        toggle_group.setLayout(toggle_layout)
+        layout.addWidget(toggle_group)
+        
+        # === Profile Section ===
+        profile_group = QGroupBox('👤  Your Profile')
+        profile_layout = QFormLayout()
+        profile_layout.setSpacing(12)
+        profile_layout.setContentsMargins(16, 16, 16, 16)
+        profile_layout.setLabelAlignment(Qt.AlignRight)
+        
+        self.ai_display_name = QLineEdit()
+        self.ai_display_name.setPlaceholderText('e.g. Shivank')
+        self.ai_display_name.setToolTip('The name others use to address you in meetings. Trigger detection uses this.')
+        profile_layout.addRow('Display Name:', self.ai_display_name)
+        
+        name_hint = QLabel('This is the name the AI listens for in the meeting transcript.')
+        name_hint.setObjectName('fieldHint')
+        profile_layout.addRow('', name_hint)
+        
+        profile_group.setLayout(profile_layout)
+        layout.addWidget(profile_group)
+        
+        # === API Credentials ===
+        cred_group = QGroupBox('🔑  API Credentials')
+        cred_layout = QVBoxLayout()
+        cred_layout.setSpacing(12)
+        cred_layout.setContentsMargins(16, 16, 16, 16)
+        
+        key_row = QHBoxLayout()
+        key_label = QLabel('Groq API Key:')
+        key_label.setFixedWidth(110)
+        key_row.addWidget(key_label)
+        
+        self.ai_api_key = QLineEdit()
+        self.ai_api_key.setPlaceholderText('gsk_...')
+        self.ai_api_key.setEchoMode(QLineEdit.Password)
+        self.ai_api_key.setToolTip('Your Groq API key from console.groq.com')
+        key_row.addWidget(self.ai_api_key)
+        
+        self.toggle_key_btn = QPushButton('👁')
+        self.toggle_key_btn.setFixedWidth(40)
+        self.toggle_key_btn.setToolTip('Show/Hide API key')
+        self.toggle_key_btn.clicked.connect(self._toggle_api_key_visibility)
+        key_row.addWidget(self.toggle_key_btn)
+        
+        cred_layout.addLayout(key_row)
+        
+        key_hint = QLabel('Get your free key at console.groq.com → API Keys')
+        key_hint.setObjectName('fieldHint')
+        cred_layout.addWidget(key_hint)
+        
+        cred_group.setLayout(cred_layout)
+        layout.addWidget(cred_group)
+        
+        # === Model Configuration ===
+        model_group = QGroupBox('🤖  Model Configuration')
+        model_layout = QFormLayout()
+        model_layout.setSpacing(12)
+        model_layout.setContentsMargins(16, 16, 16, 16)
+        model_layout.setLabelAlignment(Qt.AlignRight)
+        
+        trigger_models = [
+            'llama-3.1-8b-instant',
+            'llama-3.3-70b-versatile',
+            'qwen/qwen3-32b',
+        ]
+        self.ai_trigger_model = QComboBox()
+        self.ai_trigger_model.addItems(trigger_models)
+        self.ai_trigger_model.setToolTip('Fast model for yes/no trigger detection. 8B is fastest.')
+        model_layout.addRow('Trigger Model:', self.ai_trigger_model)
+        
+        reply_models = [
+            'qwen/qwen3-32b',
+            'llama-3.3-70b-versatile',
+            'openai/gpt-oss-120b',
+            'llama-3.1-8b-instant',
+        ]
+        self.ai_reply_model = QComboBox()
+        self.ai_reply_model.addItems(reply_models)
+        self.ai_reply_model.setToolTip('Model for generating chat replies. Larger = better quality.')
+        model_layout.addRow('Reply Model:', self.ai_reply_model)
+        
+        qa_models = [
+            'openai/gpt-oss-120b',
+            'qwen/qwen3-32b',
+            'llama-3.3-70b-versatile',
+        ]
+        self.ai_qa_model = QComboBox()
+        self.ai_qa_model.addItems(qa_models)
+        self.ai_qa_model.setToolTip('Heavy model for detailed Q&A (future use).')
+        model_layout.addRow('QA Model:', self.ai_qa_model)
+        
+        model_hint = QLabel('All models run via Groq API. Smaller models = lower latency.')
+        model_hint.setObjectName('fieldHint')
+        model_layout.addRow('', model_hint)
+        
+        model_group.setLayout(model_layout)
+        layout.addWidget(model_group)
+        
+        # === Pipeline Behavior ===
+        behavior_group = QGroupBox('🎛️  Pipeline Behavior')
+        behavior_layout = QFormLayout()
+        behavior_layout.setSpacing(14)
+        behavior_layout.setContentsMargins(16, 16, 16, 16)
+        behavior_layout.setLabelAlignment(Qt.AlignRight)
+        
+        # Chunk duration slider
+        chunk_row = QHBoxLayout()
+        self.ai_chunk_slider = QSlider(Qt.Horizontal)
+        self.ai_chunk_slider.setRange(10, 30)
+        self.ai_chunk_slider.setValue(20)
+        self.ai_chunk_slider.setTickInterval(5)
+        self.ai_chunk_slider.setTickPosition(QSlider.TicksBelow)
+        chunk_row.addWidget(self.ai_chunk_slider)
+        self.ai_chunk_label = QLabel('20s')
+        self.ai_chunk_label.setFixedWidth(36)
+        chunk_row.addWidget(self.ai_chunk_label)
+        self.ai_chunk_slider.valueChanged.connect(lambda v: self.ai_chunk_label.setText(f'{v}s'))
+        behavior_layout.addRow('Chunk Duration:', chunk_row)
+        
+        chunk_hint = QLabel('Audio chunk size sent to STT. Lower = faster response, may reduce quality.')
+        chunk_hint.setObjectName('fieldHint')
+        behavior_layout.addRow('', chunk_hint)
+        
+        # Overlap slider
+        overlap_row = QHBoxLayout()
+        self.ai_overlap_slider = QSlider(Qt.Horizontal)
+        self.ai_overlap_slider.setRange(0, 10)
+        self.ai_overlap_slider.setValue(5)
+        self.ai_overlap_slider.setTickInterval(1)
+        self.ai_overlap_slider.setTickPosition(QSlider.TicksBelow)
+        overlap_row.addWidget(self.ai_overlap_slider)
+        self.ai_overlap_label = QLabel('5s')
+        self.ai_overlap_label.setFixedWidth(36)
+        overlap_row.addWidget(self.ai_overlap_label)
+        self.ai_overlap_slider.valueChanged.connect(lambda v: self.ai_overlap_label.setText(f'{v}s'))
+        behavior_layout.addRow('Chunk Overlap:', overlap_row)
+        
+        # Cooldown slider
+        cooldown_row = QHBoxLayout()
+        self.ai_cooldown_slider = QSlider(Qt.Horizontal)
+        self.ai_cooldown_slider.setRange(10, 180)
+        self.ai_cooldown_slider.setValue(60)
+        self.ai_cooldown_slider.setTickInterval(10)
+        self.ai_cooldown_slider.setTickPosition(QSlider.TicksBelow)
+        cooldown_row.addWidget(self.ai_cooldown_slider)
+        self.ai_cooldown_label = QLabel('60s')
+        self.ai_cooldown_label.setFixedWidth(36)
+        cooldown_row.addWidget(self.ai_cooldown_label)
+        self.ai_cooldown_slider.valueChanged.connect(lambda v: self.ai_cooldown_label.setText(f'{v}s'))
+        behavior_layout.addRow('Reply Cooldown:', cooldown_row)
+        
+        cooldown_hint = QLabel('Minimum seconds between auto-replies to avoid spamming.')
+        cooldown_hint.setObjectName('fieldHint')
+        behavior_layout.addRow('', cooldown_hint)
+        
+        behavior_group.setLayout(behavior_layout)
+        layout.addWidget(behavior_group)
+        
+        # === Save Button ===
+        save_btn = QPushButton('💾  Save AI Pipeline Settings')
+        save_btn.setObjectName('successBtn')
+        save_btn.setMinimumHeight(44)
+        save_btn.clicked.connect(self.save_ai_pipeline_settings)
+        layout.addWidget(save_btn)
+        
+        layout.addStretch()
+        
+        widget.setLayout(layout)
+        scroll.setWidget(widget)
+        return scroll
+    
+    def _on_ai_toggle(self, checked):
+        """Update status label when AI pipeline is toggled."""
+        if checked:
+            self.ai_status_label.setText('● Active')
+            self.ai_status_label.setObjectName('statusActive')
+        else:
+            self.ai_status_label.setText('● Inactive')
+            self.ai_status_label.setObjectName('statusInactive')
+        # Force style refresh
+        self.ai_status_label.setStyleSheet(self.ai_status_label.styleSheet())
+        self._apply_premium_theme()
+    
+    def _toggle_api_key_visibility(self):
+        """Toggle API key show/hide."""
+        if self.ai_api_key.echoMode() == QLineEdit.Password:
+            self.ai_api_key.setEchoMode(QLineEdit.Normal)
+            self.toggle_key_btn.setText('🔒')
+        else:
+            self.ai_api_key.setEchoMode(QLineEdit.Password)
+            self.toggle_key_btn.setText('👁')
     
     def setup_tray(self):
         """Setup system tray icon"""
@@ -688,6 +1249,7 @@ class MainWindow(QMainWindow):
         """Load settings from .env file"""
         load_dotenv(self.env_file)
         
+        # Meeting settings
         self.headless_checkbox.setChecked(os.getenv('HEADLESS', 'false').lower() == 'true')
         self.solo_timeout_input.setValue(int(os.getenv('SOLO_TIMEOUT_MINUTES', '8')))
         self.max_meeting_minutes_input.setValue(int(os.getenv('MAX_MEETING_MINUTES', '240')))
@@ -696,16 +1258,41 @@ class MainWindow(QMainWindow):
         self.greeting_input.setText(os.getenv('GREETING_MESSAGE', 'Hello everyone'))
         self.screenshot_threshold_input.setValue(int(os.getenv('SCREENSHOT_HASH_THRESHOLD', '5')))
         
-        # Load storage path
+        # Storage path
         storage_path = os.getenv('STORAGE_PATH', '')
         if not storage_path:
             storage_path = str(Path(__file__).parent.parent)
         self.storage_path_input.setText(storage_path)
+        
+        # AI Pipeline settings
+        self.ai_enabled_checkbox.setChecked(os.getenv('AI_PIPELINE_ENABLED', 'true').lower() == 'true')
+        self.ai_display_name.setText(os.getenv('USER_DISPLAY_NAME', ''))
+        self.ai_api_key.setText(os.getenv('GROQ_API_KEY', ''))
+        
+        # Models — set combo box to matching value or keep default
+        trigger_model = os.getenv('LLM_TRIGGER_MODEL', 'llama-3.1-8b-instant')
+        idx = self.ai_trigger_model.findText(trigger_model)
+        if idx >= 0:
+            self.ai_trigger_model.setCurrentIndex(idx)
+        
+        reply_model = os.getenv('LLM_REPLY_MODEL', 'qwen/qwen3-32b')
+        idx = self.ai_reply_model.findText(reply_model)
+        if idx >= 0:
+            self.ai_reply_model.setCurrentIndex(idx)
+        
+        qa_model = os.getenv('LLM_QA_MODEL', 'openai/gpt-oss-120b')
+        idx = self.ai_qa_model.findText(qa_model)
+        if idx >= 0:
+            self.ai_qa_model.setCurrentIndex(idx)
+        
+        # Sliders
+        self.ai_chunk_slider.setValue(int(os.getenv('CHUNK_DURATION', '20')))
+        self.ai_overlap_slider.setValue(int(os.getenv('CHUNK_OVERLAP', '5')))
+        self.ai_cooldown_slider.setValue(int(os.getenv('REPLY_COOLDOWN', '60')))
     
     def save_settings(self):
-        """Save settings to .env file"""
+        """Save meeting settings to .env file"""
         try:
-            # Create .env if it doesn't exist
             if not self.env_file.exists():
                 self.env_file.touch()
             
@@ -719,13 +1306,39 @@ class MainWindow(QMainWindow):
             set_key(env_path, 'SCREENSHOT_HASH_THRESHOLD', str(self.screenshot_threshold_input.value()))
             set_key(env_path, 'STORAGE_PATH', self.storage_path_input.text())
             
-            # Reinitialize storage folders with new path
             self.init_storage_folders()
             
-            QMessageBox.information(self, 'Success', 'Settings saved successfully!')
+            QMessageBox.information(self, 'Settings Saved', 'Meeting settings saved successfully!')
             self.restart_scheduler()
         except Exception as e:
             QMessageBox.warning(self, 'Error', f'Failed to save settings: {str(e)}')
+    
+    def save_ai_pipeline_settings(self):
+        """Save AI Pipeline settings to .env file."""
+        try:
+            if not self.env_file.exists():
+                self.env_file.touch()
+            
+            env_path = str(self.env_file)
+            
+            set_key(env_path, 'AI_PIPELINE_ENABLED', 'true' if self.ai_enabled_checkbox.isChecked() else 'false')
+            set_key(env_path, 'USER_DISPLAY_NAME', self.ai_display_name.text().strip())
+            
+            # Only save API key if it's not empty
+            api_key = self.ai_api_key.text().strip()
+            if api_key:
+                set_key(env_path, 'GROQ_API_KEY', api_key)
+            
+            set_key(env_path, 'LLM_TRIGGER_MODEL', self.ai_trigger_model.currentText())
+            set_key(env_path, 'LLM_REPLY_MODEL', self.ai_reply_model.currentText())
+            set_key(env_path, 'LLM_QA_MODEL', self.ai_qa_model.currentText())
+            set_key(env_path, 'CHUNK_DURATION', str(self.ai_chunk_slider.value()))
+            set_key(env_path, 'CHUNK_OVERLAP', str(self.ai_overlap_slider.value()))
+            set_key(env_path, 'REPLY_COOLDOWN', str(self.ai_cooldown_slider.value()))
+            
+            QMessageBox.information(self, 'Settings Saved', 'AI Pipeline settings saved successfully!')
+        except Exception as e:
+            QMessageBox.warning(self, 'Error', f'Failed to save AI settings: {str(e)}')
     
     def check_auth_status(self):
         """Check authentication status"""

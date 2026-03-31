@@ -42,3 +42,14 @@ auth-state/
 # OS
 .DS_Store
 Thumbs.db
+
+# Browser profile (session data)
+playwright_profile/
+
+# Virtual environment
+.venv/
+
+# Audio recordings
+*.wav
+
+.env

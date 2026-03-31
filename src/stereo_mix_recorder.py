@@ -78,6 +78,9 @@ class StereoMixRecorder:
         self._total_frames_written = 0
         self._recording_path: Optional[Path] = None
         
+        # External chunk listeners (e.g., AI pipeline)
+        self._chunk_listeners: list = []
+
         self._device_index = self._find_stereo_mix_device()
 
     def _find_stereo_mix_device(self) -> Optional[int]:
@@ -115,6 +118,18 @@ class StereoMixRecorder:
         
         # Queue the audio data for the writer thread
         self._audio_queue.put(np.asarray(data, dtype=np.float32))
+
+        # Forward to external chunk listeners (e.g., AI pipeline)
+        for listener in self._chunk_listeners:
+            try:
+                listener(data.copy())
+            except Exception:
+                pass
+
+    def register_chunk_listener(self, callback) -> None:
+        """Register a callback to receive copies of audio chunks in real-time."""
+        self._chunk_listeners.append(callback)
+
 
     def _writer(self) -> None:
         """Writer thread - saves audio data to file"""

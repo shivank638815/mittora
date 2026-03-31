@@ -17,6 +17,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwrig
 from .stereo_mix_recorder import StereoMixRecorder
 from .lockfile_cleanup import cleanup_with_retry
 
+import logging
+ai_logger = logging.getLogger('mittora.ai_pipeline')
+
 
 def get_base_path():
     """
@@ -96,6 +99,9 @@ class MeetJoiner:
         # Stereo Mix audio recorder (folder assigned when meeting starts)
         self.audio_recorder = None
         self._audio_recording_started = False
+
+        # AI Pipeline controller (initialized when meeting starts)
+        self._ai_pipeline = None
 
         # Active meeting metadata
         self.current_meeting_name = None
@@ -311,6 +317,9 @@ class MeetJoiner:
                     # Start audio recording
                     self._start_audio_recording(meeting_name)
 
+                    # Initialize AI pipeline (hooks into audio stream)
+                    self._initialize_ai_pipeline()
+
                     self.meeting_start_time = time.time()
                     self.last_meeting_duration_seconds = 0
 
@@ -326,6 +335,9 @@ class MeetJoiner:
 
                     # Save chat log (already saved in real-time)
                     self._save_chat_messages_immediate()
+
+                    # Stop AI pipeline before stopping audio
+                    self._shutdown_ai_pipeline()
 
                     # Stop audio recording
                     self._stop_audio_recording()
@@ -492,68 +504,87 @@ class MeetJoiner:
         print(f'💬 Sending chat message: "{message}"')
         
         try:
-            # Wait a bit for the meeting interface to stabilize
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(1000)
             
-            # Try to open chat panel if not already open
-            chat_button_selectors = [
-                'button[aria-label*="Chat" i]:not([aria-label*="caption"])',
-                'button[jsname][aria-label*="Chat" i]',
-                'div[role="button"][aria-label*="Chat" i]',
-                'button[data-tooltip*="Chat" i]',
-            ]
-            
-            chat_opened = False
-            for selector in chat_button_selectors:
-                try:
-                    chat_button = self.page.query_selector(selector)
-                    if chat_button:
-                        chat_button.click()
-                        print('💬 Chat panel opened')
-                        chat_opened = True
-                        self.page.wait_for_timeout(1500)
-                        break
-                except:
-                    continue
-            
-            if not chat_opened:
-                print('⚠️  Could not find chat button - chat may already be open')
-            
-            # Find and click the chat input field
+            # Broader chat input selectors (Google Meet 2025+)
             chat_input_selectors = [
-                'input[placeholder*="message" i]',
-                'textarea[placeholder*="message" i]',
-                'input[aria-label*="message" i]',
+                'textarea[aria-label*="Send a message" i]',
                 'textarea[aria-label*="message" i]',
+                'textarea[placeholder*="Send a message" i]',
+                'textarea[placeholder*="message" i]',
+                'div[contenteditable="true"][aria-label*="Send a message" i]',
                 'div[contenteditable="true"][aria-label*="message" i]',
+                'div[contenteditable="plaintext-only"][aria-label*="message" i]',
+                'input[aria-label*="Send a message" i]',
+                'input[aria-label*="message" i]',
+                'input[placeholder*="Send a message" i]',
+                'input[placeholder*="message" i]',
             ]
             
-            message_typed = False
+            # Step 1: Check if chat input is already visible (panel already open)
+            chat_input = None
             for selector in chat_input_selectors:
                 try:
-                    chat_input = self.page.query_selector(selector)
-                    if chat_input:
-                        chat_input.click()
-                        self.page.wait_for_timeout(500)
-                        
-                        # Type the message
-                        chat_input.type(message, delay=100)
-                        print('✍️  Message typed')
-                        message_typed = True
-                        self.page.wait_for_timeout(500)
-                        
-                        # Press Enter to send
-                        self.page.keyboard.press('Enter')
-                        print('✅ Message sent successfully!')
-                        self._log_event('Chat message sent', message)
-                        
-                        self.page.wait_for_timeout(1000)
-                        self._close_chat_panel()
+                    el = self.page.query_selector(selector)
+                    if el and el.is_visible():
+                        chat_input = el
+                        print('💬 Chat panel already open — input found')
                         break
                 except:
                     continue
             
-            if not message_typed:
+            # Step 2: If not found, toggle the chat panel open
+            if not chat_input:
+                chat_button_selectors = [
+                    'button[aria-label*="Chat with everyone" i]',
+                    'button[aria-label*="Chat" i]:not([aria-label*="caption"])',
+                    'button[jsname][aria-label*="Chat" i]',
+                    'div[role="button"][aria-label*="Chat" i]',
+                    'button[data-tooltip*="Chat" i]',
+                ]
+                
+                for selector in chat_button_selectors:
+                    try:
+                        chat_button = self.page.query_selector(selector)
+                        if chat_button:
+                            chat_button.click()
+                            print('💬 Chat panel opened')
+                            self.page.wait_for_timeout(1500)
+                            break
+                    except:
+                        continue
+                
+                # Try finding input again after opening panel
+                for selector in chat_input_selectors:
+                    try:
+                        el = self.page.query_selector(selector)
+                        if el and el.is_visible():
+                            chat_input = el
+                            break
+                    except:
+                        continue
+            
+            # Step 3: Type and send
+            if chat_input:
+                chat_input.click()
+                self.page.wait_for_timeout(300)
+                
+                # Clear any existing text
+                chat_input.fill('') if hasattr(chat_input, 'fill') else None
+                self.page.wait_for_timeout(200)
+                
+                chat_input.type(message, delay=50)
+                print('✍️  Message typed')
+                self.page.wait_for_timeout(500)
+                
+                # Press Enter to send
+                self.page.keyboard.press('Enter')
+                print('✅ Message sent successfully!')
+                self._log_event('Chat message sent', message)
+                self.page.wait_for_timeout(500)
+                
+                # Do NOT close chat panel — leave it open for monitoring
+            else:
                 print('⚠️  Could not find chat input field')
                 # Take screenshot for debugging
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -565,7 +596,6 @@ class MeetJoiner:
         except Exception as error:
             print(f'❌ Error sending chat message: {str(error)}')
             self._log_event('Error', f'Chat message error: {str(error)}')
-            # Take screenshot for debugging
             try:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 screenshot_path = self.screenshots_dir / f'chat-error_{timestamp}.png'
@@ -766,6 +796,16 @@ class MeetJoiner:
                 except Exception as e:
                     print(f'⚠️  Chat polling error: {str(e)}')
 
+            # AI Pipeline: send any queued replies (runs on Playwright thread)
+            if self._ai_pipeline and self._ai_pipeline.is_running:
+                try:
+                    pending_reply = self._ai_pipeline.get_pending_reply()
+                    if pending_reply:
+                        print(f'🤖 AI Pipeline reply → sending to chat: {pending_reply}')
+                        self._send_chat_message(pending_reply)
+                except Exception as e:
+                    print(f'⚠️  AI reply send error: {str(e)}')
+
             time.sleep(1)  # Check every 1 second for better responsiveness
 
         return time.time() - start_time
@@ -821,7 +861,14 @@ class MeetJoiner:
     
     def _create_meeting_folder(self, meeting_name):
         """Create a dedicated folder for this meeting's files"""
-        safe_name = meeting_name.strip().replace('/', '_').replace('\\', '_')
+        import re
+        safe_name = meeting_name.strip()
+        # Remove all Windows-invalid path chars: \ / : * ? " < > |
+        safe_name = re.sub(r'[\\/:*?"<>|]', '_', safe_name)
+        # Remove protocol prefix if URL was passed as name
+        safe_name = re.sub(r'^https?__', '', safe_name)
+        # Collapse multiple underscores
+        safe_name = re.sub(r'_+', '_', safe_name).strip('_')
         safe_name = '_'.join(part for part in safe_name.split() if part) or 'Meeting'
         meeting_root = self.storage_dir / safe_name
         meeting_root.mkdir(parents=True, exist_ok=True)
@@ -893,6 +940,112 @@ class MeetJoiner:
         except Exception as error:
             print(f'⚠️  Unable to stop audio recording: {str(error)}')
             self._audio_recording_started = False
+
+    def _initialize_ai_pipeline(self):
+        """Initialize the AI pipeline and hook it into the audio stream."""
+        load_dotenv()
+        
+        # Check if AI pipeline is enabled
+        if os.getenv('AI_PIPELINE_ENABLED', 'true').lower() != 'true':
+            print('🧠 AI Pipeline is DISABLED via config')
+            return
+        
+        # Check for API key
+        if not os.getenv('GROQ_API_KEY'):
+            print('⚠️  GROQ_API_KEY not set — AI Pipeline disabled')
+            return
+        
+        try:
+            from .ai_pipeline.groq_client import GroqClient
+            from .ai_pipeline.stt_engine import STTEngine
+            from .ai_pipeline.transcript_manager import TranscriptManager
+            from .ai_pipeline.llm_router import LLMRouter
+            from .ai_pipeline.trigger_detector import TriggerDetector
+            from .ai_pipeline.reply_engine import ReplyEngine
+            from .ai_pipeline.pipeline_controller import PipelineController
+            
+            # Configure logging for AI pipeline
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+                datefmt='%H:%M:%S',
+            )
+            
+            # Read config
+            user_name = os.getenv('USER_DISPLAY_NAME', 'User')
+            chunk_duration = float(os.getenv('CHUNK_DURATION', '20'))
+            chunk_overlap = float(os.getenv('CHUNK_OVERLAP', '5'))
+            reply_cooldown = float(os.getenv('REPLY_COOLDOWN', '60'))
+            sample_rate = self.audio_recorder.sample_rate if self.audio_recorder else 44100
+            channels = self.audio_recorder.channels if self.audio_recorder else 2
+            
+            # Build pipeline components
+            groq_client = GroqClient()
+            
+            stt_engine = STTEngine(
+                groq_client=groq_client,
+                chunk_duration=chunk_duration,
+                chunk_overlap=chunk_overlap,
+                sample_rate=sample_rate,
+                channels=channels,
+            )
+            
+            transcript_manager = TranscriptManager(
+                meeting_id=self.current_meeting_id or 'unknown',
+                save_dir=self.chatlogs_dir,
+            )
+            
+            llm_router = LLMRouter(groq_client=groq_client)
+            
+            trigger_detector = TriggerDetector(
+                llm_router=llm_router,
+                transcript_manager=transcript_manager,
+                user_name=user_name,
+            )
+            
+            reply_engine = ReplyEngine(
+                llm_router=llm_router,
+                user_name=user_name,
+            )
+            
+            pipeline = PipelineController(
+                groq_client=groq_client,
+                stt_engine=stt_engine,
+                transcript_manager=transcript_manager,
+                trigger_detector=trigger_detector,
+                reply_engine=reply_engine,
+                chat_sender=self._send_chat_message,
+                reply_cooldown=reply_cooldown,
+            )
+            
+            # Hook into audio stream
+            if self.audio_recorder:
+                self.audio_recorder.register_chunk_listener(pipeline.on_audio_chunk)
+                print('🔗 AI Pipeline hooked into audio stream')
+            
+            # Start the pipeline
+            pipeline.start()
+            self._ai_pipeline = pipeline
+            
+            print(f'🧠 AI Pipeline ACTIVE — monitoring for "{user_name}"')
+            print(f'   Chunk: {chunk_duration}s | Cooldown: {reply_cooldown}s')
+            
+        except Exception as error:
+            print(f'⚠️  Failed to initialize AI Pipeline: {str(error)}')
+            import traceback
+            traceback.print_exc()
+            self._ai_pipeline = None
+
+    def _shutdown_ai_pipeline(self):
+        """Gracefully shut down the AI pipeline."""
+        if self._ai_pipeline:
+            try:
+                self._ai_pipeline.stop()
+                print('🧠 AI Pipeline stopped')
+            except Exception as error:
+                print(f'⚠️  Error stopping AI Pipeline: {str(error)}')
+            finally:
+                self._ai_pipeline = None
 
     
 
