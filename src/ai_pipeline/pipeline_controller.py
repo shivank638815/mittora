@@ -141,11 +141,17 @@ class PipelineController:
 
         logger.info("🚨 TRIGGER ACTIVATED — Generating reply...")
 
-        # Step 4: Generate reply
+        # Step 4: Generate reply with multi-turn context
         recent = self.transcript_manager.get_recent_context(seconds=60)
         extended = self.transcript_manager.get_extended_context(minutes=5)
+        history = self.transcript_manager.get_conversation_history(max_pairs=3)
 
-        reply = self.reply_engine.generate(recent, extended)
+        reply = self.reply_engine.generate(
+            recent_context=recent,
+            extended_context=extended,
+            current_trigger_text=text,
+            conversation_history=history,
+        )
         if not reply:
             logger.info("Reply engine returned no response — skipping")
             return

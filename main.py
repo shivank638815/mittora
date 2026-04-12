@@ -22,8 +22,7 @@ def print_banner():
     print("""
 ===========================================================
                                                            
-           AutoMeet Attender v1.0                     
-           Automated Google Meet Attendance System         
+                Meetora
                                                            
 ===========================================================
 """)

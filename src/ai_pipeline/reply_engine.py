@@ -1,5 +1,7 @@
 """
 Reply Engine — generates natural meeting responses using LLM.
+Builds multi-turn role-based messages so the LLM remembers past Q&A
+and always prioritizes the latest question.
 Does NOT send chat — only returns the reply text.
 """
 import logging
@@ -10,7 +12,10 @@ from .llm_router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
-REPLY_PROMPT = """You are "{user_name}", a participant in an online meeting.
+# System prompt — defines persona and rules (sent as "system" role)
+# Profile fields are injected dynamically when available.
+SYSTEM_PROMPT = """You are "{user_name}", a participant in an online meeting.
+{profile_block}
 Someone has addressed you or asked you a question. Respond naturally and briefly.
 
 CRITICAL RULES:
@@ -20,15 +25,12 @@ CRITICAL RULES:
 - Be natural, conversational, and helpful.
 - Do NOT start with "As {user_name}" or "Sure!" or any filler.
 - Do NOT use quotation marks around your response.
-- If nothing meaningful requires a response, return exactly: NO_RESPONSE
+- ALWAYS answer the LATEST question. Do NOT repeat previous answers.
+- If nothing meaningful requires a response, return exactly: NO_RESPONSE"""
 
-RECENT CONVERSATION (last 60 seconds):
-{recent_context}
-
-EXTENDED CONTEXT (last 5 minutes):
-{extended_context}
-
-Your response (direct answer only, no thinking):"""
+# Extended context preamble — sent as a system-level summary
+CONTEXT_PREAMBLE = """MEETING BACKGROUND (last 5 minutes of conversation for reference):
+{extended_context}"""
 
 # Prefixes to strip from LLM output
 UNWANTED_PREFIXES = [
@@ -48,28 +50,67 @@ MAX_REPLY_LENGTH = 200
 
 
 class ReplyEngine:
-    """Generates chat replies using LLM based on meeting context."""
+    """Generates chat replies using multi-turn role-based LLM messages."""
 
-    def __init__(self, llm_router: LLMRouter, user_name: str = "User"):
+    def __init__(
+        self,
+        llm_router: LLMRouter,
+        user_name: str = "User",
+        user_role: str = "",
+        meeting_purpose: str = "",
+        subject_domain: str = "",
+        response_style: str = "Casual",
+    ):
         self.llm_router = llm_router
         self.user_name = user_name
 
-    def generate(self, recent_context: str, extended_context: str) -> Optional[str]:
+        # Build profile block from non-empty fields
+        profile_lines = []
+        if user_role:
+            profile_lines.append(f"Your role/designation: {user_role}")
+        if meeting_purpose:
+            profile_lines.append(f"Meeting type: {meeting_purpose}")
+        if subject_domain:
+            profile_lines.append(f"Your subject expertise: {subject_domain}")
+        if response_style:
+            profile_lines.append(f"Response style: {response_style}")
+        self._profile_block = "\n".join(profile_lines)
+
+        if self._profile_block:
+            logger.info("👤 Profile loaded → %s", self._profile_block.replace('\n', ' | '))
+
+    def generate(
+        self,
+        recent_context: str,
+        extended_context: str,
+        current_trigger_text: str = "",
+        conversation_history: list[dict] | None = None,
+    ) -> Optional[str]:
         """
-        Generate a reply based on meeting context.
+        Generate a reply using multi-turn role-based messages.
+
+        Args:
+            recent_context: Plain text transcript of last 60s (fallback context).
+            extended_context: Plain text transcript of last 5 min (system summary).
+            current_trigger_text: The specific STT chunk that triggered this reply.
+            conversation_history: Role-tagged list [{"role":"user"|"assistant", "content":...}]
+                                  from TranscriptManager.get_conversation_history().
 
         Returns clean reply text, or None if no response needed.
         """
-        if not recent_context:
+        if not recent_context and not current_trigger_text:
             return None
 
-        prompt = REPLY_PROMPT.format(
-            user_name=self.user_name,
-            recent_context=recent_context,
-            extended_context=extended_context,
+        messages = self._build_messages(
+            recent_context, extended_context,
+            current_trigger_text, conversation_history or [],
         )
 
-        messages = [{"role": "user", "content": prompt}]
+        logger.debug(
+            "🧠 LLM messages (%d turns): %s",
+            len(messages),
+            [(m["role"], m["content"][:60]) for m in messages],
+        )
 
         raw_reply = self.llm_router.route("generate_reply", messages)
         if raw_reply is None:
@@ -83,6 +124,59 @@ class ReplyEngine:
 
         logger.info("💬 Generated reply: %s", cleaned)
         return cleaned
+
+    def _build_messages(
+        self,
+        recent_context: str,
+        extended_context: str,
+        current_trigger_text: str,
+        history: list[dict],
+    ) -> list[dict]:
+        """
+        Build a multi-turn message list with proper roles:
+          1. system  → persona + rules
+          2. system  → extended context (background summary)
+          3. user/assistant pairs → prior Q&A history
+          4. user    → CURRENT question (always last = highest priority)
+        """
+        msgs: list[dict] = []
+
+        # 1. System: persona + rules + profile context
+        msgs.append({
+            "role": "system",
+            "content": SYSTEM_PROMPT.format(
+                user_name=self.user_name,
+                profile_block=self._profile_block,
+            ),
+        })
+
+        # 2. System: extended context as background summary
+        if extended_context:
+            msgs.append({
+                "role": "system",
+                "content": CONTEXT_PREAMBLE.format(extended_context=extended_context),
+            })
+
+        # 3. Prior Q&A history as alternating user/assistant turns
+        if history:
+            for entry in history:
+                role = entry.get("role", "user")
+                content = entry.get("content", "")
+                if content:
+                    msgs.append({"role": role, "content": content})
+
+        # 4. Current question — placed LAST so LLM prioritizes it
+        current = current_trigger_text.strip() if current_trigger_text else ""
+        if not current and recent_context:
+            current = recent_context
+
+        if current:
+            msgs.append({
+                "role": "user",
+                "content": f"Answer this now: {current}",
+            })
+
+        return msgs
 
     def _clean_reply(self, text: str) -> Optional[str]:
         """Clean and validate LLM reply."""

@@ -1,6 +1,7 @@
 """
 Transcript Manager — thread-safe rolling transcript buffer with JSON persistence.
-Stores last 5 minutes of meeting transcript and supports deduplication.
+Stores last 5 minutes of meeting transcript with role-tagged segments
+(user speech vs bot replies) for multi-turn LLM context.
 """
 import json
 import logging
@@ -78,6 +79,7 @@ class TranscriptManager:
                 "timestamp": datetime.now().isoformat(),
                 "epoch": time.time(),
                 "text": text,
+                "role": "user",
             }
 
             self._segments.append(segment)
@@ -94,26 +96,86 @@ class TranscriptManager:
         return True
 
     def record_reply(self, reply: str, trigger_context: str = ""):
-        """Record an LLM-generated reply for the transcript log."""
+        """
+        Record an LLM-generated reply.
+        Inserts into BOTH _llm_replies (for file logging) AND _segments
+        (for context continuity) so subsequent LLM calls see prior answers.
+        """
         with self._lock:
+            now = datetime.now()
+            epoch = time.time()
+
+            # Archive entry for file persistence
             entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now.isoformat(),
                 "reply": reply,
                 "trigger_context": trigger_context[:200],
             }
             self._llm_replies.append(entry)
+
+            # Inject into main timeline so get_recent_context / get_conversation_history
+            # can see the bot's own answers in chronological order
+            segment = {
+                "timestamp": now.isoformat(),
+                "epoch": epoch,
+                "text": reply,
+                "role": "assistant",
+            }
+            self._segments.append(segment)
+
             self._save_to_file()
 
     def get_recent_context(self, seconds: float = 60.0) -> str:
-        """Get transcript text from the last N seconds."""
+        """Get transcript text from the last N seconds with role labels."""
         cutoff = time.time() - seconds
         with self._lock:
-            texts = [
-                seg["text"]
+            parts = []
+            for seg in self._segments:
+                if seg.get("epoch", 0) < cutoff:
+                    continue
+                role = seg.get("role", "user")
+                text = seg["text"]
+                if role == "assistant":
+                    parts.append(f"[Bot replied]: {text}")
+                else:
+                    parts.append(text)
+        return " ".join(parts)
+
+    def get_conversation_history(self, max_pairs: int = 3) -> list[dict]:
+        """
+        Return the last N user→assistant exchange pairs as role-tagged dicts.
+        Used by ReplyEngine to build multi-turn LLM messages.
+
+        Returns list of {"role": "user"|"assistant", "content": str}.
+        Capped to max_pairs to stay within token limits.
+        """
+        with self._lock:
+            # Collect only segments that have a role (all should, but be safe)
+            role_segments = [
+                {"role": seg.get("role", "user"), "content": seg["text"]}
                 for seg in self._segments
-                if seg.get("epoch", 0) >= cutoff
+                if seg.get("role") in ("user", "assistant")
             ]
-        return " ".join(texts)
+
+        if not role_segments:
+            return []
+
+        # Count assistant entries to determine how many pairs exist
+        assistant_indices = [
+            i for i, s in enumerate(role_segments) if s["role"] == "assistant"
+        ]
+
+        if not assistant_indices:
+            # No bot replies yet — return last few user segments as context
+            return role_segments[-max_pairs:]
+
+        # Keep the last max_pairs assistant messages and everything between them
+        if len(assistant_indices) <= max_pairs:
+            start = 0
+        else:
+            start = assistant_indices[-max_pairs]
+
+        return role_segments[start:]
 
     def get_extended_context(self, minutes: float = 5.0) -> str:
         """Get transcript text from the last N minutes."""
@@ -152,7 +214,11 @@ class TranscriptManager:
             data = {
                 "meeting_id": self.meeting_id,
                 "segments": [
-                    {"timestamp": s["timestamp"], "text": s["text"]}
+                    {
+                        "timestamp": s["timestamp"],
+                        "text": s["text"],
+                        "role": s.get("role", "user"),
+                    }
                     for s in self._segments
                 ],
                 "llm_replies": self._llm_replies,

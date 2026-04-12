@@ -822,8 +822,9 @@ class MeetJoiner:
     def close(self):
         """Close browser and cleanup resources"""
         try:
-            # Save authentication state before closing
-            self._save_auth_state()
+            # Save authentication state before closing (only if context still alive)
+            if self.context and not getattr(self.context, '_closed', False):
+                self._save_auth_state()
 
             # Close persistent context (browser not available with persistent context)
             if self.context:
@@ -1006,6 +1007,10 @@ class MeetJoiner:
             reply_engine = ReplyEngine(
                 llm_router=llm_router,
                 user_name=user_name,
+                user_role=os.getenv('USER_ROLE', ''),
+                meeting_purpose=os.getenv('USER_MEETING_PURPOSE', ''),
+                subject_domain=os.getenv('USER_SUBJECT_DOMAIN', ''),
+                response_style=os.getenv('USER_RESPONSE_STYLE', 'Casual'),
             )
             
             pipeline = PipelineController(
