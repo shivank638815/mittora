@@ -126,7 +126,10 @@ class TriggerDetector:
         extended = self.transcript_manager.get_extended_context(minutes=5)
 
         if not recent:
+            logger.warning("🎯 No recent context available — cannot confirm trigger")
             return False
+
+        logger.info("🎯 LLM trigger check — recent context: '%s'", recent[:120])
 
         prompt = TRIGGER_CHECK_PROMPT.format(
             user_name=self.user_name,
@@ -136,7 +139,12 @@ class TriggerDetector:
 
         messages = [{"role": "user", "content": prompt}]
 
-        response = self.llm_router.route("trigger_check", messages)
+        try:
+            response = self.llm_router.route("trigger_check", messages)
+        except Exception as e:
+            logger.error("🎯 Trigger check LLM call FAILED with exception: %s", e)
+            return False
+
         if response is None:
             logger.warning("Trigger check LLM returned None — defaulting to NO")
             return False

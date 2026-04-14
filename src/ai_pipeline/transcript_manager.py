@@ -182,18 +182,31 @@ class TranscriptManager:
         return self.get_recent_context(seconds=minutes * 60)
 
     def _is_duplicate(self, new_text: str) -> bool:
-        """Check if new text substantially overlaps with recent entries."""
-        new_lower = new_text.lower()
+        """Check if new text is effectively the same as a recent entry.
+
+        Uses strict matching to avoid dropping corrected STT outputs.
+        Example: 'tell me about you' vs 'tell me about yourself' are
+        NOT duplicates — the second is a refined transcription.
+        """
+        new_lower = new_text.lower().strip()
 
         for recent in self._recent_texts:
-            # If new text is a substring of a recent entry
-            if new_lower in recent:
+            # Exact match
+            if new_lower == recent:
                 return True
-            # If a recent entry is a substring of new text (partial overlap)
-            if recent in new_lower and len(recent) > 20:
-                # Only count as duplicate if the overlap is substantial
-                overlap_ratio = len(recent) / len(new_lower)
-                if overlap_ratio > 0.7:
+
+            # Near-exact: one is a substring of the other AND covers 90%+
+            # of the longer text. This catches true duplicates like
+            # overlapping audio chunks repeating the same sentence.
+            longer = max(len(new_lower), len(recent))
+            if longer == 0:
+                continue
+
+            if new_lower in recent:
+                if len(new_lower) / longer >= 0.90:
+                    return True
+            elif recent in new_lower:
+                if len(recent) / longer >= 0.90:
                     return True
 
         return False

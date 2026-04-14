@@ -124,19 +124,25 @@ class PipelineController:
         if not text:
             return
 
+        logger.info("📝 Pipeline received STT text: '%s'", text[:120])
+
         # Step 2: Save to transcript manager
         was_new = self.transcript_manager.append(text)
         if not was_new:
-            logger.debug("Transcript deduped, skipping pipeline")
+            logger.info("⏭️  Transcript deduped — skipping: '%s'", text[:80])
             return
+
+        logger.info("✅ Transcript appended (new). Checking trigger...")
 
         # Step 3: Check trigger
         if self._is_on_cooldown():
-            logger.debug("On cooldown — skipping trigger check")
+            remaining = self.cooldown_remaining
+            logger.info("⏳ On cooldown (%.0fs remaining) — skipping trigger check", remaining)
             return
 
         triggered = self.trigger_detector.check(text)
         if not triggered:
+            logger.info("🔇 No trigger detected for: '%s'", text[:80])
             return
 
         logger.info("🚨 TRIGGER ACTIVATED — Generating reply...")
