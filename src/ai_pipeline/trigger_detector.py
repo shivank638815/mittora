@@ -31,7 +31,8 @@ Rules:
 - Answer YES only if someone is clearly expecting "{user_name}" to respond.
 - General group questions do NOT count unless "{user_name}" is specifically mentioned.
 - If "{user_name}" was just mentioned casually (e.g., greeting, acknowledgment), answer NO.
-- Answer with ONLY "YES" or "NO". Nothing else."""
+
+IMPORTANT: Respond with ONLY one word: YES or NO. Do not explain. Do not think. Do not use any tags. Just output YES or NO."""
 
 
 class TriggerDetector:
@@ -149,10 +150,62 @@ class TriggerDetector:
             logger.warning("Trigger check LLM returned None — defaulting to NO")
             return False
 
-        answer = response.strip().upper()
+        raw_answer = response.strip()
 
-        # Parse response — look for YES anywhere in the response
-        triggered = "YES" in answer and "NO" not in answer
+        # Strip <think>/<THINK> blocks that thinking models (Qwen) may emit
+        # But FIRST, extract the think content so we can search inside it if needed
+        think_content = ''
+        think_match = re.search(r'<[Tt][Hh][Ii][Nn][Kk]>(.*?)</[Tt][Hh][Ii][Nn][Kk]>', raw_answer, flags=re.DOTALL)
+        if think_match:
+            think_content = think_match.group(1).strip()
+        # Also handle unclosed think blocks
+        unclosed_match = re.search(r'<[Tt][Hh][Ii][Nn][Kk]>(.*)', raw_answer, flags=re.DOTALL)
+        if unclosed_match and not think_match:
+            think_content = unclosed_match.group(1).strip()
 
-        logger.info("🎯 Trigger check result: %s (raw: '%s')", triggered, answer)
+        cleaned = re.sub(r'<[Tt][Hh][Ii][Nn][Kk]>.*?</[Tt][Hh][Ii][Nn][Kk]>', '', raw_answer, flags=re.DOTALL).strip()
+        cleaned = re.sub(r'<[Tt][Hh][Ii][Nn][Kk]>.*', '', cleaned, flags=re.DOTALL).strip()
+
+        # If nothing left after stripping, search INSIDE the think block for YES/NO
+        if not cleaned and think_content:
+            logger.warning("Trigger response was entirely a think block — searching inside think content")
+            think_upper = think_content.upper()
+            # Look for a clear YES or NO verdict inside the thinking
+            if 'YES' in think_upper and 'NO' not in think_upper:
+                logger.info("🎯 Found YES inside think block")
+                return True
+            elif 'NO' in think_upper and 'YES' not in think_upper:
+                logger.info("🎯 Found NO inside think block")
+                return False
+            # Both present — check the last occurrence (final conclusion)
+            elif 'YES' in think_upper and 'NO' in think_upper:
+                last_yes = think_upper.rfind('YES')
+                last_no = think_upper.rfind('NO')
+                triggered = last_yes > last_no
+                logger.info("🎯 Think block has both YES/NO — last one wins: %s", triggered)
+                return triggered
+            else:
+                logger.warning("🎯 Think block had no YES/NO — defaulting to NO")
+                return False
+        elif not cleaned:
+            logger.warning("Trigger response was empty — defaulting to NO")
+            return False
+
+        cleaned_upper = cleaned.upper()
+
+        # Look for YES/NO in the cleaned output
+        has_yes = "YES" in cleaned_upper
+        has_no = "NO" in cleaned_upper
+
+        # If both present, use the LAST one (the final answer)
+        if has_yes and has_no:
+            last_yes = cleaned_upper.rfind("YES")
+            last_no = cleaned_upper.rfind("NO")
+            triggered = last_yes > last_no
+        elif has_yes:
+            triggered = True
+        else:
+            triggered = False
+
+        logger.info("🎯 Trigger check result: %s (raw: '%s', cleaned: '%s')", triggered, raw_answer[:80], cleaned[:40])
         return triggered

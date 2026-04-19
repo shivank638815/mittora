@@ -339,6 +339,9 @@ class MeetJoiner:
                     # Stop AI pipeline before stopping audio
                     self._shutdown_ai_pipeline()
 
+                    # Generate meeting summary (JSON + PDF)
+                    self._generate_meeting_summary(meeting_name)
+
                     # Stop audio recording
                     self._stop_audio_recording()
 
@@ -1052,8 +1055,59 @@ class MeetJoiner:
             finally:
                 self._ai_pipeline = None
 
-    
+    def _generate_meeting_summary(self, meeting_name):
+        """Generate meeting summary (JSON + PDF) from transcript after meeting ends."""
+        if not self.chatlogs_dir:
+            print('⚠️  No chatlog directory — skipping summary generation')
+            return
 
+        transcript_path = self.chatlogs_dir / 'ai_transcript.json'
+        if not transcript_path.exists():
+            print('⚠️  No transcript file found — skipping summary generation')
+            return
+
+        try:
+            from .ai_pipeline.summary_engine import SummaryEngine
+            from .ai_pipeline.groq_client import GroqClient
+            from .ai_pipeline.llm_router import LLMRouter
+
+            print('📝 Generating meeting summary...')
+
+            # Load transcript text
+            transcript_text = SummaryEngine.load_transcript_from_file(transcript_path)
+            if not transcript_text:
+                print('⚠️  Transcript too short for summary generation')
+                return
+
+            # Build summary engine
+            groq_client = GroqClient()
+            llm_router = LLMRouter(groq_client=groq_client)
+            engine = SummaryEngine(llm_router=llm_router)
+
+            # Generate summary
+            summary = engine.generate(transcript_text, meeting_name=meeting_name)
+            if not summary:
+                print('⚠️  Summary generation failed')
+                return
+
+            # Save JSON
+            json_path = engine.save_summary(summary, self.chatlogs_dir)
+            if json_path:
+                print(f'📋 Summary saved: {json_path.name}')
+
+            # Export PDF
+            pdf_path = engine.export_pdf(summary, self.chatlogs_dir)
+            if pdf_path:
+                print(f'📄 Summary PDF exported: {pdf_path.name}')
+
+        except ImportError as e:
+            print(f'⚠️  Summary dependencies not available: {e}')
+        except Exception as error:
+            print(f'⚠️  Summary generation error: {str(error)}')
+            import traceback
+            traceback.print_exc()
+
+    
     def _log_event(self, event_type, details):
         """Log an event to the chat log"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

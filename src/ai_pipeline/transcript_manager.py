@@ -125,6 +125,9 @@ class TranscriptManager:
 
             self._save_to_file()
 
+        # Also save to human-readable chat log
+        self._append_chat_log(trigger_context, reply)
+
     def get_recent_context(self, seconds: float = 60.0) -> str:
         """Get transcript text from the last N seconds with role labels."""
         cutoff = time.time() - seconds
@@ -240,6 +243,22 @@ class TranscriptManager:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error("Failed to save transcript: %s", e)
+
+    def _append_chat_log(self, trigger_context: str, reply: str):
+        """Append a human-readable AI chat exchange to ai_chat_log.txt."""
+        if not self.save_dir:
+            return
+        try:
+            chat_log_path = self.save_dir / "ai_chat_log.txt"
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(chat_log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{now}]\n")
+                if trigger_context:
+                    f.write(f"  Trigger: {trigger_context[:200]}\n")
+                f.write(f"  AI Reply: {reply}\n")
+                f.write("-" * 60 + "\n")
+        except Exception as e:
+            logger.error("Failed to append chat log: %s", e)
 
     def clear(self):
         """Clear all segments."""

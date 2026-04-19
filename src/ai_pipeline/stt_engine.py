@@ -33,7 +33,49 @@ HALLUCINATION_PHRASES = {
     "music",
     "applause",
     "laughter",
+    "oh",
+    "uh",
+    "hmm",
+    "huh",
+    "okay",
+    "i'm sorry",
+    "i don't know",
+    "what",
+    "hey",
+    "so",
+    "yeah",
+    "yes",
+    "no",
+    "right",
+    "alright",
+    "okay bye",
+    "you know",
+    "i see",
+    "ah",
 }
+
+# Patterns that indicate Whisper is hallucinating inappropriate or irrelevant content
+# These appear when audio quality is poor or speech is in a non-target language
+HALLUCINATION_PATTERNS = [
+    r"(?i)\bsex(y|ual)?\b",
+    r"(?i)\bporn\b",
+    r"(?i)\bnude\b",
+    r"(?i)\bnaked\b",
+    r"(?i)\bkiss me\b",
+    r"(?i)\bfuck\b",
+    r"(?i)\bdo you want to sex\b",
+    r"(?i)\bplease like and subscribe\b",
+    r"(?i)\bclick the bell\b",
+    r"(?i)\bthis video is sponsored\b",
+    r"(?i)\bsubscribe to my channel\b",
+    r"(?i)\bdon't forget to subscribe\b",
+    r"(?i)\bthanks for listening\b",
+    r"(?i)\bmusic playing\b",
+    r"(?i)\b[Aa]thering mic\b",
+]
+
+# Minimum avg_logprob threshold — segments below this are low-confidence garbage
+MIN_AVG_LOGPROB = -1.0
 
 
 class AudioChunkBuffer:
@@ -179,13 +221,27 @@ class STTEngine:
             return None
 
     def _is_no_speech(self, segments: list[dict]) -> bool:
-        """Check if all segments indicate no speech."""
+        """Check if all segments indicate no speech or very low confidence."""
         if not segments:
             return False
-        return all(
-            seg.get("no_speech_prob", 0) > self.no_speech_threshold
-            for seg in segments
-        )
+
+        no_speech_count = 0
+        for seg in segments:
+            no_speech_prob = seg.get("no_speech_prob", 0)
+            avg_logprob = seg.get("avg_logprob", 0)
+
+            # High no_speech probability
+            if no_speech_prob > self.no_speech_threshold:
+                no_speech_count += 1
+            # Very low confidence transcription (hallucination indicator)
+            elif avg_logprob < MIN_AVG_LOGPROB:
+                logger.debug(
+                    "Low confidence segment (avg_logprob=%.2f): '%s'",
+                    avg_logprob, seg.get('text', '')[:60],
+                )
+                no_speech_count += 1
+
+        return no_speech_count == len(segments)
 
     def _clean_text(self, text: str) -> Optional[str]:
         """Clean transcription text: remove hallucinations, dedup, filter empty."""
@@ -194,11 +250,17 @@ class STTEngine:
 
         text = text.strip()
 
-        # Remove common hallucination phrases
+        # Remove common hallucination phrases (exact match)
         text_lower = text.lower().strip().rstrip(".")
         if text_lower in HALLUCINATION_PHRASES:
-            logger.debug("Filtered hallucination: '%s'", text)
+            logger.debug("Filtered hallucination (exact): '%s'", text)
             return None
+
+        # Remove pattern-based hallucinations (sexual, YouTube, etc.)
+        for pattern in HALLUCINATION_PATTERNS:
+            if re.search(pattern, text):
+                logger.debug("Filtered hallucination (pattern): '%s'", text)
+                return None
 
         # Remove repeated phrases (e.g., "hello hello hello")
         text = self._remove_repeated_phrases(text)

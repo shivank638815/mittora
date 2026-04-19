@@ -5,6 +5,7 @@ Handles STT (Whisper), chat completions (LLama, Qwen, GPT-OSS), retry logic, and
 import io
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -59,6 +60,7 @@ class GroqClient:
                     language=language,
                     response_format="verbose_json",
                     temperature=0.0,
+                    prompt="Meeting discussion, lecture, classroom, names, technical terms.",
                 )
 
                 segments = []
@@ -130,7 +132,8 @@ class GroqClient:
                 )
 
                 if completion.choices and completion.choices[0].message:
-                    return completion.choices[0].message.content or ""
+                    raw = completion.choices[0].message.content or ""
+                    return self._strip_think_blocks(raw)
                 return ""
 
             except RateLimitError:
@@ -157,3 +160,14 @@ class GroqClient:
                 return None
 
         return None
+
+    @staticmethod
+    def _strip_think_blocks(text: str) -> str:
+        """Remove <think>/<THINK> reasoning blocks from LLM output."""
+        # Closed blocks: <think>...</think>
+        cleaned = re.sub(r'<[Tt][Hh][Ii][Nn][Kk]>.*?</[Tt][Hh][Ii][Nn][Kk]>', '', text, flags=re.DOTALL)
+        # Unclosed blocks (truncated): <think>...
+        cleaned = re.sub(r'<[Tt][Hh][Ii][Nn][Kk]>.*', '', cleaned, flags=re.DOTALL)
+        # Stray closing tags
+        cleaned = re.sub(r'</[Tt][Hh][Ii][Nn][Kk]>', '', cleaned)
+        return cleaned.strip()

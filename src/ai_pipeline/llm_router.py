@@ -15,6 +15,7 @@ DEFAULT_MODELS = {
     "trigger_check": "llama-3.1-8b-instant",
     "generate_reply": "qwen/qwen3-32b",
     "qa": "openai/gpt-oss-120b",
+    "summarize": "openai/gpt-oss-120b",
 }
 
 # Fallback chains — if primary model fails, try these in order
@@ -22,6 +23,7 @@ FALLBACK_CHAINS = {
     "trigger_check": ["llama-3.1-8b-instant", "qwen/qwen3-32b"],
     "generate_reply": ["qwen/qwen3-32b", "llama-3.1-8b-instant"],
     "qa": ["openai/gpt-oss-120b", "qwen/qwen3-32b"],
+    "summarize": ["openai/gpt-oss-120b", "qwen/qwen3-32b", "llama-3.3-70b-versatile"],
 }
 
 # Temperature settings per task type
@@ -29,13 +31,15 @@ TASK_TEMPERATURES = {
     "trigger_check": 0.1,   # Deterministic yes/no
     "generate_reply": 0.6,  # Natural variation
     "qa": 0.3,              # Accurate but not rigid
+    "summarize": 0.3,       # Factual summary extraction
 }
 
 # Max token limits per task type
 TASK_MAX_TOKENS = {
-    "trigger_check": 16,    # Just "YES" or "NO"
+    "trigger_check": 128,   # Must be high enough for thinking models (<think> block + YES/NO)
     "generate_reply": 512,  # Room for reply even if thinking leaks
     "qa": 1024,             # Detailed answers
+    "summarize": 2048,      # Full structured summary output
 }
 
 
@@ -50,6 +54,7 @@ class LLMRouter:
             "trigger_check": os.getenv("LLM_TRIGGER_MODEL", DEFAULT_MODELS["trigger_check"]),
             "generate_reply": os.getenv("LLM_REPLY_MODEL", DEFAULT_MODELS["generate_reply"]),
             "qa": os.getenv("LLM_QA_MODEL", DEFAULT_MODELS["qa"]),
+            "summarize": os.getenv("LLM_QA_MODEL", DEFAULT_MODELS["summarize"]),
         }
 
         logger.info(
@@ -64,7 +69,7 @@ class LLMRouter:
         Route a task to the appropriate LLM model.
 
         Args:
-            task_type: One of 'trigger_check', 'generate_reply', 'qa'
+            task_type: One of 'trigger_check', 'generate_reply', 'qa', 'summarize'
             messages: Chat messages in OpenAI format [{"role": ..., "content": ...}]
 
         Returns:

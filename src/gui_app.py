@@ -5,6 +5,7 @@ Built with PySide6 (Qt for Python)
 import sys
 import os
 import json
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QPushButton, QLabel, QLineEdit, QSpinBox, QCheckBox,
     QTimeEdit, QTableWidget, QTableWidgetItem, QDialog, QFormLayout,
-    QTextEdit, QSystemTrayIcon, QMenu, QMessageBox, QHeaderView,
+    QTextEdit, QTextBrowser, QSystemTrayIcon, QMenu, QMessageBox, QHeaderView,
     QFileDialog, QScrollArea, QComboBox, QSlider, QGroupBox, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QTime
@@ -21,6 +22,7 @@ from PySide6.QtGui import QIcon, QAction
 from dotenv import load_dotenv, set_key, find_dotenv
 from .scheduler import MeetingScheduler
 from .authentication import run_google_authentication
+from .theme_config import build_stylesheet, get_theme, LIGHT, DARK, SIDEBAR_WIDTH, HEADER_HEIGHT, NAV_BTN_HEIGHT, MIN_WINDOW_W, MIN_WINDOW_H
 
 
 class MeetingWorker(QThread):
@@ -221,9 +223,10 @@ class MeetingDialog(QDialog):
 
 class MainWindow(QMainWindow):
     """Main application window"""
-    
+    _qa_answer_signal = Signal(str)  # Thread-safe signal for QA answers
     def __init__(self):
         super().__init__()
+        self._current_theme = 'dark'  # Default theme
         self.meetings_file = Path(__file__).parent.parent / 'meetings.json'
         self.env_file = Path(__file__).parent.parent / '.env'
         self.scheduler = None
@@ -235,6 +238,9 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self.setup_tray()
+
+        # Connect QA answer signal (thread-safe)
+        self._qa_answer_signal.connect(self._ma_display_answer)
         self.load_meetings()
         self.load_settings()
         self.check_auth_status()
@@ -296,7 +302,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(nav_label)
         sidebar_layout.addSpacing(8)
         
-        nav_items = ['Meetings', 'Quick Join', 'History', 'Settings', 'AI Pipeline', 'Profile']
+        nav_items = ['Meetings', 'Quick Join', 'History', 'Meeting Assistant', 'AI Assistant', 'Settings', 'AI Pipeline', 'Profile']
         self.nav_buttons = []
         for i, label in enumerate(nav_items):
             btn = QPushButton(f'    {label}')
@@ -339,6 +345,17 @@ class MainWindow(QMainWindow):
         ch_layout.addWidget(self.page_title)
         ch_layout.addStretch()
         
+        # Theme toggle button — always visible in header
+        self.theme_toggle_btn = QPushButton()
+        self.theme_toggle_btn.setObjectName('themeToggleBtn')
+        self.theme_toggle_btn.setFixedSize(40, 40)
+        self.theme_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.theme_toggle_btn.setToolTip('Switch theme')
+        self.theme_toggle_btn.clicked.connect(self._toggle_theme)
+        self._update_theme_toggle_icon()
+        ch_layout.addWidget(self.theme_toggle_btn)
+        ch_layout.addSpacing(12)
+        
         self.meeting_count_label = QLabel('0 meetings scheduled')
         self.meeting_count_label.setObjectName('headerInfo')
         ch_layout.addWidget(self.meeting_count_label)
@@ -353,6 +370,8 @@ class MainWindow(QMainWindow):
         self.page_stack.addWidget(self.create_meetings_tab())
         self.page_stack.addWidget(self.create_quick_join_tab())
         self.page_stack.addWidget(self.create_history_tab())
+        self.page_stack.addWidget(self.create_meeting_assistant_tab())
+        self.page_stack.addWidget(self.create_ai_assistant_tab())
         self.page_stack.addWidget(self.create_settings_tab())
         self.page_stack.addWidget(self.create_ai_pipeline_tab())
         self.page_stack.addWidget(self.create_profile_tab())
@@ -368,364 +387,55 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self.status_label)
     
     def _apply_premium_theme(self):
-        """Apply Mittora premium dark theme — warm amber accent."""
-        self.setStyleSheet("""
-            /* ══════════════════════════════════════
-               MITTORA — Premium Dark Theme
-               Accent: Warm Amber #e8a838
-               ══════════════════════════════════════ */
+        """Apply the current theme from centralized theme_config."""
+        self.setStyleSheet(build_stylesheet(self._current_theme))
 
-            QMainWindow {
-                background-color: #0c0c12;
-                color: #e8e4dc;
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
-            }
+    def _switch_theme(self, theme_name: str):
+        """Switch between 'light' and 'dark' themes and persist the choice."""
+        self._current_theme = theme_name
+        self._apply_premium_theme()
 
-            /* ── Sidebar ── */
-            QFrame#sidebar {
-                background-color: #101018;
-                border-right: 1px solid #1e1e2a;
-            }
-            QFrame#brandFrame { background: transparent; }
-            QLabel#brandIcon {
-                font-size: 24px;
-                color: #e8a838;
-            }
-            QLabel#brandLabel {
-                font-size: 22px;
-                font-weight: 700;
-                color: #f0ece4;
-                letter-spacing: 1px;
-            }
-            QLabel#versionBadge {
-                font-size: 10px;
-                color: #5a5668;
-                padding: 3px 8px;
-                background: #18182a;
-                border-radius: 6px;
-                border: 1px solid #2a2a3a;
-            }
-            QFrame#sidebarSep { background-color: #1e1e2a; }
-            QLabel#navSectionLabel {
-                font-size: 10px;
-                font-weight: 700;
-                color: #4a465a;
-                letter-spacing: 2px;
-                padding-left: 24px;
-            }
+        # Update header toggle icon
+        self._update_theme_toggle_icon()
 
-            /* ── Nav Buttons ── */
-            QPushButton#navBtn {
-                background: transparent;
-                color: #7a7688;
-                border: none;
-                border-left: 3px solid transparent;
-                border-radius: 0px;
-                text-align: left;
-                padding-left: 24px;
-                font-size: 13.5px;
-                font-weight: 500;
-            }
-            QPushButton#navBtn:hover {
-                background: #18182e;
-                color: #c0bcc8;
-                border-left: 3px solid #2a2a40;
-            }
-            QPushButton#navBtn:checked {
-                background: #1a1a30;
-                color: #e8a838;
-                border-left: 3px solid #e8a838;
-                font-weight: 600;
-            }
+        # Update settings page toggle buttons if they exist
+        if hasattr(self, 'theme_light_btn') and hasattr(self, 'theme_dark_btn'):
+            if theme_name == 'light':
+                self.theme_light_btn.setObjectName('themeBtnActive')
+                self.theme_dark_btn.setObjectName('themeBtn')
+            else:
+                self.theme_light_btn.setObjectName('themeBtn')
+                self.theme_dark_btn.setObjectName('themeBtnActive')
+            self.theme_light_btn.setStyle(self.theme_light_btn.style())
+            self.theme_dark_btn.setStyle(self.theme_dark_btn.style())
 
-            /* ── Sidebar Footer ── */
-            QFrame#sidebarFooter { border-top: 1px solid #1e1e2a; }
-            QLabel#schedulerStatus {
-                font-size: 12px;
-                color: #34d399;
-                font-weight: 500;
-            }
+        # Persist to .env
+        try:
+            env_path = str(self.env_file)
+            if self.env_file.exists():
+                set_key(env_path, 'APP_THEME', theme_name)
+        except Exception:
+            pass
 
-            /* ── Content Area ── */
-            QFrame#contentFrame { background-color: #0c0c12; }
-            QFrame#contentHeader {
-                background-color: #0e0e16;
-                border-bottom: 1px solid #1a1a26;
-            }
-            QLabel#pageTitle {
-                font-size: 24px;
-                font-weight: 700;
-                color: #f0ece4;
-                letter-spacing: 0.3px;
-            }
-            QLabel#headerInfo {
-                font-size: 12px;
-                color: #5a5668;
-                padding: 6px 14px;
-                background: #14141e;
-                border-radius: 8px;
-                border: 1px solid #1e1e2a;
-            }
-            QWidget#pageContainer { background-color: #0c0c12; }
+    def _toggle_theme(self):
+        """Toggle between light and dark theme — wired to header button."""
+        new_theme = 'light' if self._current_theme == 'dark' else 'dark'
+        self._switch_theme(new_theme)
 
-            /* ── GroupBox ── */
-            QGroupBox {
-                font-size: 14px;
-                font-weight: 600;
-                color: #c0bcc8;
-                border: 1px solid #1e1e2a;
-                border-radius: 12px;
-                margin-top: 18px;
-                padding-top: 28px;
-                background-color: #111119;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 5px 16px;
-                left: 16px;
-                background-color: #1a1a28;
-                border-radius: 8px;
-                border: 1px solid #24243a;
-                color: #e8e4dc;
-            }
-
-            /* ── Inputs ── */
-            QLineEdit, QSpinBox, QComboBox, QTimeEdit {
-                background-color: #14141e;
-                border: 1px solid #24243a;
-                border-radius: 8px;
-                padding: 9px 14px;
-                color: #e8e4dc;
-                font-size: 13px;
-                selection-background-color: #e8a838;
-                selection-color: #0c0c12;
-                min-height: 20px;
-            }
-            QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTimeEdit:focus {
-                border-color: #e8a838;
-                background-color: #18182a;
-            }
-            QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
-                background-color: #0e0e16;
-                color: #3a3648;
-                border-color: #18182a;
-            }
-            QComboBox::drop-down {
-                border: none;
-                padding-right: 12px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #14141e;
-                color: #e8e4dc;
-                border: 1px solid #24243a;
-                selection-background-color: #e8a838;
-                selection-color: #0c0c12;
-                border-radius: 8px;
-                padding: 4px;
-            }
-
-            /* ── Buttons ── */
-            QPushButton {
-                background-color: #1a1a28;
-                color: #e8e4dc;
-                border: 1px solid #24243a;
-                border-radius: 8px;
-                padding: 9px 22px;
-                font-weight: 500;
-                font-size: 13px;
-                min-height: 18px;
-            }
-            QPushButton:hover {
-                background-color: #24243a;
-                border-color: #e8a838;
-                color: #f0ece4;
-            }
-            QPushButton:pressed {
-                background-color: #e8a838;
-                color: #0c0c12;
-                border-color: #e8a838;
-            }
-            QPushButton#primaryBtn {
-                background-color: #e8a838;
-                border: none;
-                color: #0c0c12;
-                font-weight: 600;
-            }
-            QPushButton#primaryBtn:hover { background-color: #d4922a; }
-            QPushButton#primaryBtn:pressed { background-color: #c07e1c; }
-            QPushButton#dangerBtn {
-                background-color: #dc2626;
-                border: none;
-                color: white;
-                font-weight: 600;
-            }
-            QPushButton#dangerBtn:hover { background-color: #b91c1c; }
-            QPushButton#successBtn {
-                background-color: #059669;
-                border: none;
-                color: white;
-                font-weight: 600;
-            }
-            QPushButton#successBtn:hover { background-color: #047857; }
-
-            /* ── Checkbox ── */
-            QCheckBox {
-                color: #c0bcc8;
-                spacing: 10px;
-                font-size: 13px;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border: 2px solid #2a2a3a;
-                border-radius: 5px;
-                background-color: #14141e;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #e8a838;
-                border-color: #e8a838;
-            }
-            QCheckBox::indicator:hover { border-color: #e8a838; }
-
-            /* ── Table ── */
-            QTableWidget {
-                background-color: #111119;
-                border: 1px solid #1e1e2a;
-                border-radius: 10px;
-                gridline-color: #1a1a26;
-                color: #e8e4dc;
-                font-size: 13px;
-            }
-            QTableWidget::item {
-                padding: 10px 8px;
-                border-bottom: 1px solid #1a1a26;
-            }
-            QTableWidget::item:selected {
-                background-color: rgba(232, 168, 56, 0.1);
-                color: #e8a838;
-            }
-            QHeaderView::section {
-                background-color: #14141e;
-                color: #5a5668;
-                border: none;
-                border-bottom: 2px solid #1e1e2a;
-                padding: 12px 8px;
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-            }
-
-            /* ── TextEdit (Log) ── */
-            QTextEdit {
-                background-color: #0a0a10;
-                border: 1px solid #1e1e2a;
-                border-radius: 10px;
-                color: #8a8698;
-                font-family: 'Cascadia Code', 'Consolas', monospace;
-                font-size: 12px;
-                padding: 12px;
-            }
-
-            /* ── ScrollBar ── */
-            QScrollBar:vertical {
-                background: transparent;
-                width: 6px;
-                border-radius: 3px;
-                margin: 4px 0;
-            }
-            QScrollBar::handle:vertical {
-                background: #2a2a3a;
-                border-radius: 3px;
-                min-height: 40px;
-            }
-            QScrollBar::handle:vertical:hover { background: #e8a838; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            QScrollBar:horizontal {
-                background: transparent;
-                height: 6px;
-                border-radius: 3px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #2a2a3a;
-                border-radius: 3px;
-                min-width: 40px;
-            }
-            QScrollBar::handle:horizontal:hover { background: #e8a838; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-
-            /* ── Slider ── */
-            QSlider::groove:horizontal {
-                background: #1a1a28;
-                height: 6px;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #e8a838;
-                width: 18px;
-                height: 18px;
-                margin: -6px 0;
-                border-radius: 9px;
-            }
-            QSlider::handle:horizontal:hover { background: #d4922a; }
-            QSlider::sub-page:horizontal {
-                background: #e8a838;
-                border-radius: 3px;
-            }
-
-            /* ── StatusBar ── */
-            QStatusBar {
-                background-color: #0a0a10;
-                color: #4a465a;
-                border-top: 1px solid #1a1a26;
-                font-size: 12px;
-                padding: 2px 8px;
-            }
-
-            /* ── Labels ── */
-            QLabel { color: #c0bcc8; }
-            QLabel#sectionTitle {
-                font-size: 17px;
-                font-weight: 700;
-                color: #f0ece4;
-            }
-            QLabel#sectionDesc {
-                font-size: 12px;
-                color: #5a5668;
-            }
-            QLabel#fieldHint {
-                font-size: 11px;
-                color: #4a465a;
-                font-style: italic;
-            }
-            QLabel#statusActive {
-                color: #34d399;
-                font-weight: 600;
-            }
-            QLabel#statusInactive {
-                color: #ef4444;
-                font-weight: 600;
-            }
-
-            /* ── Misc ── */
-            QFrame#separator {
-                background-color: #1e1e2a;
-                max-height: 1px;
-            }
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollArea > QWidget > QWidget {
-                background: transparent;
-            }
-        """)
+    def _update_theme_toggle_icon(self):
+        """Update the header toggle button text based on current theme."""
+        if not hasattr(self, 'theme_toggle_btn'):
+            return
+        if self._current_theme == 'dark':
+            self.theme_toggle_btn.setText('Light')
+            self.theme_toggle_btn.setToolTip('Switch to Light mode')
+        else:
+            self.theme_toggle_btn.setText('Dark')
+            self.theme_toggle_btn.setToolTip('Switch to Dark mode')
     
     def _switch_page(self, index):
         """Switch the active page in sidebar navigation."""
-        titles = ['Meetings', 'Quick Join', 'History', 'Settings', 'AI Pipeline', 'Profile']
+        titles = ['Meetings', 'Quick Join', 'History', 'Meeting Assistant', 'AI Assistant', 'Settings', 'AI Pipeline', 'Profile']
         self.page_stack.setCurrentIndex(index)
         self.page_title.setText(titles[index])
         for i, btn in enumerate(self.nav_buttons):
@@ -771,7 +481,17 @@ class MainWindow(QMainWindow):
         self.meetings_table.setHorizontalHeaderLabels([
             'Name', 'URL', 'Schedule', 'Actions'
         ])
-        self.meetings_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Flexible columns: Name & URL stretch, Schedule & Actions fixed
+        header = self.meetings_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)      # Name — flexible
+        header.setSectionResizeMode(1, QHeaderView.Stretch)      # URL  — flexible
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Schedule — fit content
+        header.setSectionResizeMode(3, QHeaderView.Fixed)        # Actions — fixed
+        header.resizeSection(3, 220)                             # Actions width
+        header.setMinimumSectionSize(80)
+        self.meetings_table.verticalHeader().setDefaultSectionSize(44)
+        self.meetings_table.setWordWrap(False)
+        self.meetings_table.setTextElideMode(Qt.ElideMiddle)
         layout.addWidget(self.meetings_table)
         
         widget.setLayout(layout)
@@ -863,7 +583,14 @@ class MainWindow(QMainWindow):
         self.history_table.setHorizontalHeaderLabels([
             'Meeting', 'Date', 'Chat Messages', 'Screenshots', 'Audio'
         ])
-        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        h_header = self.history_table.horizontalHeader()
+        h_header.setSectionResizeMode(0, QHeaderView.Stretch)           # Meeting — flexible
+        h_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Date
+        h_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Chat
+        h_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Screenshots
+        h_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Audio
+        h_header.setMinimumSectionSize(80)
+        self.history_table.verticalHeader().setDefaultSectionSize(44)
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.doubleClicked.connect(self._open_session_detail)
@@ -1083,6 +810,883 @@ class MainWindow(QMainWindow):
         if Path(storage_path).exists():
             os.startfile(storage_path)
 
+    # ══════════════════════════════════════════════════════════
+    #  MEETING ASSISTANT TAB — Summary + Q&A + Transcript + Media
+    # ══════════════════════════════════════════════════════════
+
+    def create_meeting_assistant_tab(self):
+        """Create the Meeting Assistant tab — summary, Q&A chatbot, transcript, and media viewers."""
+        self._ma_qa_engine = None  # Current QA engine instance (isolated per meeting)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(14)
+        layout.setContentsMargins(12, 12, 12, 24)
+        widget.setLayout(layout)
+
+        # ── Meeting Selector ──
+        selector_row = QHBoxLayout()
+        selector_label = QLabel('Select Meeting:')
+        selector_label.setObjectName('sectionTitle')
+        selector_row.addWidget(selector_label)
+
+        self.ma_meeting_combo = QComboBox()
+        self.ma_meeting_combo.setMinimumWidth(320)
+        self.ma_meeting_combo.setToolTip('Choose a meeting session to view its summary, transcript, and ask questions.')
+        self.ma_meeting_combo.currentIndexChanged.connect(self._ma_on_meeting_selected)
+        selector_row.addWidget(self.ma_meeting_combo)
+
+        ma_refresh_btn = QPushButton('Refresh')
+        ma_refresh_btn.clicked.connect(self._ma_refresh_meetings)
+        selector_row.addWidget(ma_refresh_btn)
+
+        selector_row.addStretch()
+        layout.addLayout(selector_row)
+
+        desc = QLabel('Each meeting has its own isolated AI assistant — no overlap between meetings.')
+        desc.setObjectName('sectionDesc')
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # ── Summary Section ──
+        summary_group = QGroupBox('Meeting Summary')
+        summary_layout = QVBoxLayout()
+        summary_layout.setContentsMargins(16, 20, 16, 16)
+        summary_layout.setSpacing(10)
+
+        self.ma_summary_text = QTextEdit()
+        self.ma_summary_text.setReadOnly(True)
+        self.ma_summary_text.setMinimumHeight(160)
+        self.ma_summary_text.setMaximumHeight(220)
+        self.ma_summary_text.setPlaceholderText('Select a meeting to view its summary...')
+        summary_layout.addWidget(self.ma_summary_text)
+
+        summary_btn_row = QHBoxLayout()
+        self.ma_export_pdf_btn = QPushButton('Export PDF')
+        self.ma_export_pdf_btn.setObjectName('primaryBtn')
+        self.ma_export_pdf_btn.setMinimumHeight(36)
+        self.ma_export_pdf_btn.setEnabled(False)
+        self.ma_export_pdf_btn.clicked.connect(self._ma_export_pdf)
+        summary_btn_row.addWidget(self.ma_export_pdf_btn)
+
+        self.ma_regen_btn = QPushButton('Regenerate Summary')
+        self.ma_regen_btn.setMinimumHeight(36)
+        self.ma_regen_btn.setEnabled(False)
+        self.ma_regen_btn.clicked.connect(self._ma_regenerate_summary)
+        summary_btn_row.addWidget(self.ma_regen_btn)
+
+        summary_btn_row.addStretch()
+        summary_layout.addLayout(summary_btn_row)
+
+        summary_group.setLayout(summary_layout)
+        layout.addWidget(summary_group)
+
+        # ── Transcript Section ──
+        transcript_group = QGroupBox('Transcript')
+        transcript_layout = QVBoxLayout()
+        transcript_layout.setContentsMargins(16, 20, 16, 16)
+        transcript_layout.setSpacing(8)
+
+        self.ma_transcript_text = QTextEdit()
+        self.ma_transcript_text.setReadOnly(True)
+        self.ma_transcript_text.setMinimumHeight(120)
+        self.ma_transcript_text.setMaximumHeight(180)
+        self.ma_transcript_text.setPlaceholderText('Transcript will appear here when a meeting is selected...')
+        transcript_layout.addWidget(self.ma_transcript_text)
+
+        transcript_group.setLayout(transcript_layout)
+        layout.addWidget(transcript_group)
+
+        # ── Media Info Section (Screenshots + Audio) ──
+        media_group = QGroupBox('Media Files')
+        media_layout = QVBoxLayout()
+        media_layout.setContentsMargins(16, 20, 16, 16)
+        media_layout.setSpacing(8)
+
+        self.ma_screenshots_label = QLabel('Screenshots: —')
+        self.ma_screenshots_label.setObjectName('sectionDesc')
+        media_layout.addWidget(self.ma_screenshots_label)
+
+        self.ma_audio_label = QLabel('Audio: —')
+        self.ma_audio_label.setObjectName('sectionDesc')
+        media_layout.addWidget(self.ma_audio_label)
+
+        self.ma_open_folder_btn = QPushButton('Open Meeting Folder')
+        self.ma_open_folder_btn.setMinimumHeight(36)
+        self.ma_open_folder_btn.setEnabled(False)
+        self.ma_open_folder_btn.clicked.connect(self._ma_open_folder)
+        media_layout.addWidget(self.ma_open_folder_btn)
+
+        media_group.setLayout(media_layout)
+        layout.addWidget(media_group)
+
+        # Note: AI Q&A chatbot is in its own dedicated "AI Assistant" tab
+
+        layout.addStretch()
+
+        scroll.setWidget(widget)
+
+        # Populate meetings list after a short delay
+        QTimer.singleShot(600, self._ma_refresh_meetings)
+
+        return scroll
+
+    # ═══════════════════════════════════════════
+    #  AI ASSISTANT TAB — Full-page ChatGPT-style
+    # ═══════════════════════════════════════════
+
+    def create_ai_assistant_tab(self):
+        """Create the AI Assistant tab — a dedicated full-page chat interface."""
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        # ── Top Bar: Meeting selector ──
+        top_bar = QFrame()
+        top_bar.setObjectName('aiTopBar')
+        top_bar.setFixedHeight(56)
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(20, 8, 20, 8)
+        top_layout.setSpacing(12)
+
+        meeting_label = QLabel('Meeting Context:')
+        meeting_label.setObjectName('aiTopLabel')
+        top_layout.addWidget(meeting_label)
+
+        self.ai_meeting_combo = QComboBox()
+        self.ai_meeting_combo.setMinimumHeight(36)
+        self.ai_meeting_combo.setMinimumWidth(280)
+        self.ai_meeting_combo.setPlaceholderText('Select a meeting to chat about...')
+        self.ai_meeting_combo.currentIndexChanged.connect(self._ai_on_meeting_selected)
+        top_layout.addWidget(self.ai_meeting_combo)
+
+        top_layout.addStretch()
+
+        self.ai_status_label = QLabel('')
+        self.ai_status_label.setObjectName('aiStatusLabel')
+        top_layout.addWidget(self.ai_status_label)
+
+        page_layout.addWidget(top_bar)
+
+        # ── Chat Display Area (fills all remaining space) ──
+        self._ma_chat_messages = []
+        self._ma_is_thinking = False
+
+        self.ma_chat_display = QTextBrowser()
+        self.ma_chat_display.setObjectName('aiChatDisplay')
+        self.ma_chat_display.setReadOnly(True)
+        self.ma_chat_display.setOpenExternalLinks(False)
+        self._ma_render_welcome()
+        page_layout.addWidget(self.ma_chat_display, 1)
+
+        # ── Bottom Input Bar (sticky) ──
+        input_bar = QFrame()
+        input_bar.setObjectName('aiInputBar')
+        input_layout = QVBoxLayout(input_bar)
+        input_layout.setContentsMargins(40, 12, 40, 16)
+        input_layout.setSpacing(8)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(10)
+
+        self.ma_chat_input = QLineEdit()
+        self.ma_chat_input.setObjectName('aiChatInput')
+        self.ma_chat_input.setPlaceholderText('Ask anything about this meeting...')
+        self.ma_chat_input.setMinimumHeight(44)
+        self.ma_chat_input.returnPressed.connect(self._ma_send_question)
+        input_row.addWidget(self.ma_chat_input)
+
+        self.ma_send_btn = QPushButton('Send')
+        self.ma_send_btn.setObjectName('aiSendBtn')
+        self.ma_send_btn.setMinimumHeight(44)
+        self.ma_send_btn.setFixedWidth(90)
+        self.ma_send_btn.setEnabled(False)
+        self.ma_send_btn.setCursor(Qt.PointingHandCursor)
+        self.ma_send_btn.clicked.connect(self._ma_send_question)
+        input_row.addWidget(self.ma_send_btn)
+
+        input_layout.addLayout(input_row)
+
+        # Bottom actions row
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(12)
+
+        self.ma_clear_chat_btn = QPushButton('Clear Chat')
+        self.ma_clear_chat_btn.setObjectName('aiClearBtn')
+        self.ma_clear_chat_btn.setFixedHeight(28)
+        self.ma_clear_chat_btn.setCursor(Qt.PointingHandCursor)
+        self.ma_clear_chat_btn.setEnabled(False)
+        self.ma_clear_chat_btn.clicked.connect(self._ma_clear_chat)
+        actions_row.addWidget(self.ma_clear_chat_btn)
+
+        actions_row.addStretch()
+
+        self.ai_model_label = QLabel(f'Model: {os.getenv("LLM_QA_MODEL", "openai/gpt-oss-120b")}')
+        self.ai_model_label.setObjectName('aiModelLabel')
+        actions_row.addWidget(self.ai_model_label)
+
+        input_layout.addLayout(actions_row)
+        page_layout.addWidget(input_bar)
+
+        # Populate meetings with a delay
+        QTimer.singleShot(800, self._ai_refresh_meetings)
+
+        return page
+
+    def _ai_refresh_meetings(self):
+        """Populate AI assistant meeting dropdown."""
+        self.ai_meeting_combo.blockSignals(True)
+        self.ai_meeting_combo.clear()
+        self.ai_meeting_combo.addItem('Select a meeting...', None)
+
+        load_dotenv(self.env_file)
+        storage_path = os.getenv('STORAGE_PATH', '')
+        if not storage_path:
+            storage_path = str(Path(__file__).parent.parent)
+
+        storage_dir = Path(storage_path)
+        if not storage_dir.exists():
+            self.ai_meeting_combo.blockSignals(False)
+            return
+
+        skip_dirs = {
+            'auth-state', 'playwright_profile', '.venv', '__pycache__',
+            'src', 'tests', '.git', '.idea', '.agent', 'node_modules',
+        }
+
+        for meeting_dir in sorted(storage_dir.iterdir(), key=lambda d: d.stat().st_mtime if d.is_dir() else 0, reverse=True):
+            if not meeting_dir.is_dir():
+                continue
+            if meeting_dir.name.startswith('.') or meeting_dir.name in skip_dirs:
+                continue
+            has_chatlog = any(
+                sub.is_dir() and 'chatlog' in sub.name.lower()
+                for sub in meeting_dir.iterdir()
+            )
+            if has_chatlog:
+                display = meeting_dir.name.replace('_', ' ')
+                self.ai_meeting_combo.addItem(f'  {display}', str(meeting_dir))
+
+        self.ai_meeting_combo.blockSignals(False)
+
+    def _ai_on_meeting_selected(self, index):
+        """Handle meeting selection in the AI assistant tab."""
+        meeting_path = self.ai_meeting_combo.currentData()
+        if not meeting_path:
+            self._ma_chat_messages.clear()
+            self._ma_render_welcome()
+            self.ma_send_btn.setEnabled(False)
+            self.ma_clear_chat_btn.setEnabled(False)
+            self.ai_status_label.setText('')
+            return
+
+        meeting_dir = Path(meeting_path)
+        self.ai_status_label.setText(f'Loading {meeting_dir.name}...')
+        self._ma_init_qa_engine(meeting_dir)
+
+        # Update status
+        if self._ma_qa_engine and self._ma_qa_engine.has_data:
+            t_len = len(self._ma_qa_engine._transcript_text)
+            s_len = len(self._ma_qa_engine._summary_text)
+            self.ai_status_label.setText(
+                f'Context: {t_len:,} chars transcript, {s_len:,} chars summary'
+            )
+        else:
+            self.ai_status_label.setText('No meeting data available')
+
+    # ── Meeting Assistant Helpers ──
+
+    def _ma_refresh_meetings(self):
+        """Populate the meeting session dropdown from the storage directory."""
+        self.ma_meeting_combo.blockSignals(True)
+        self.ma_meeting_combo.clear()
+        self.ma_meeting_combo.addItem('-- Select a meeting --', '')
+
+        load_dotenv(self.env_file)
+        storage_path = os.getenv('STORAGE_PATH', '')
+        if not storage_path:
+            storage_path = str(Path(__file__).parent.parent)
+
+        storage_dir = Path(storage_path)
+        if not storage_dir.exists():
+            self.ma_meeting_combo.blockSignals(False)
+            return
+
+        skip_dirs = {
+            'auth-state', 'playwright_profile', '.venv', '__pycache__',
+            'src', 'tests', '.git', '.idea', '.agent', 'node_modules',
+        }
+
+        for meeting_dir in sorted(storage_dir.iterdir(), key=lambda d: d.stat().st_mtime if d.is_dir() else 0, reverse=True):
+            if not meeting_dir.is_dir():
+                continue
+            if meeting_dir.name.startswith('.') or meeting_dir.name in skip_dirs:
+                continue
+            # Check if it has chatlog/screenshot/audio subdirectories
+            has_content = any(
+                sub.is_dir() and any(k in sub.name.lower() for k in ('chatlog', 'screenshot', 'audio'))
+                for sub in meeting_dir.iterdir()
+            )
+            if has_content:
+                display_name = meeting_dir.name.replace('_', ' ')
+                try:
+                    mtime = meeting_dir.stat().st_mtime
+                    date_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+                    display_name = f'{display_name}  ({date_str})'
+                except Exception:
+                    pass
+                self.ma_meeting_combo.addItem(display_name, str(meeting_dir))
+
+        self.ma_meeting_combo.blockSignals(False)
+
+    def _ma_on_meeting_selected(self, index):
+        """Handle meeting selection change — load all meeting data."""
+        meeting_path = self.ma_meeting_combo.currentData()
+        if not meeting_path:
+            # Reset all fields
+            self.ma_summary_text.clear()
+            self.ma_transcript_text.clear()
+            self.ma_screenshots_label.setText('Screenshots: —')
+            self.ma_audio_label.setText('Audio: —')
+            self.ma_export_pdf_btn.setEnabled(False)
+            self.ma_regen_btn.setEnabled(False)
+            self.ma_open_folder_btn.setEnabled(False)
+            return
+
+        meeting_dir = Path(meeting_path)
+        self.ma_open_folder_btn.setEnabled(True)
+        self.ma_regen_btn.setEnabled(True)
+
+        # Load summary
+        self._ma_load_summary(meeting_dir)
+
+        # Load transcript
+        self._ma_load_transcript(meeting_dir)
+
+        # Load media info
+        self._ma_load_media_info(meeting_dir)
+
+    def _ma_load_summary(self, meeting_dir: Path):
+        """Load and display meeting summary from JSON."""
+        self.ma_summary_text.clear()
+        chatlog_dirs = sorted(
+            [d for d in meeting_dir.iterdir() if d.is_dir() and 'chatlog' in d.name.lower()],
+            key=lambda d: d.stat().st_mtime, reverse=True,
+        )
+        if not chatlog_dirs:
+            self.ma_summary_text.setPlainText('No chatlog directory found.')
+            self.ma_export_pdf_btn.setEnabled(False)
+            return
+
+        summary_path = chatlog_dirs[0] / 'meeting_summary.json'
+        if not summary_path.exists():
+            self.ma_summary_text.setPlainText('No summary generated yet.\nClick "Regenerate Summary" to create one.')
+            self.ma_export_pdf_btn.setEnabled(False)
+            return
+
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            lines = []
+            if data.get('title'):
+                lines.append(f"Title: {data['title']}\n")
+
+            if data.get('key_topics'):
+                lines.append('Key Topics:')
+                for t in data['key_topics']:
+                    lines.append(f'  - {t}')
+                lines.append('')
+
+            if data.get('summary'):
+                lines.append(f"Summary:\n{data['summary']}\n")
+
+            if data.get('important_points'):
+                lines.append('Important Points:')
+                for p in data['important_points']:
+                    lines.append(f'  - {p}')
+                lines.append('')
+
+            if data.get('action_items'):
+                lines.append('Action Items:')
+                for a in data['action_items']:
+                    lines.append(f'  - {a}')
+                lines.append('')
+
+            if data.get('questions_discussed'):
+                lines.append('Questions Discussed:')
+                for q in data['questions_discussed']:
+                    lines.append(f'  - {q}')
+
+            self.ma_summary_text.setPlainText('\n'.join(lines) or 'Empty summary.')
+            self.ma_export_pdf_btn.setEnabled(True)
+
+        except Exception as e:
+            self.ma_summary_text.setPlainText(f'Error loading summary: {e}')
+            self.ma_export_pdf_btn.setEnabled(False)
+
+    def _ma_load_transcript(self, meeting_dir: Path):
+        """Load and display meeting transcript."""
+        self.ma_transcript_text.clear()
+        chatlog_dirs = sorted(
+            [d for d in meeting_dir.iterdir() if d.is_dir() and 'chatlog' in d.name.lower()],
+            key=lambda d: d.stat().st_mtime, reverse=True,
+        )
+        if not chatlog_dirs:
+            self.ma_transcript_text.setPlainText('No transcript available.')
+            return
+
+        transcript_path = chatlog_dirs[0] / 'ai_transcript.json'
+        if not transcript_path.exists():
+            self.ma_transcript_text.setPlainText('No transcript file found for this meeting.')
+            return
+
+        try:
+            with open(transcript_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            segments = data.get('segments', [])
+            if not segments:
+                self.ma_transcript_text.setPlainText('Transcript file is empty.')
+                return
+
+            lines = []
+            for seg in segments:
+                role = seg.get('role', 'user')
+                text = seg.get('text', '')
+                ts = seg.get('timestamp', '')
+                if text:
+                    prefix = '[Bot]' if role == 'assistant' else '[Speaker]'
+                    ts_str = f' ({ts})' if ts else ''
+                    lines.append(f'{prefix}{ts_str}: {text}')
+
+            self.ma_transcript_text.setPlainText('\n'.join(lines) or 'No transcript segments.')
+
+        except Exception as e:
+            self.ma_transcript_text.setPlainText(f'Error loading transcript: {e}')
+
+    def _ma_load_media_info(self, meeting_dir: Path):
+        """Load screenshots and audio file info."""
+        screenshot_count = 0
+        audio_files = []
+
+        for sub in meeting_dir.iterdir():
+            if not sub.is_dir():
+                continue
+            name_lower = sub.name.lower()
+            if 'screenshot' in name_lower:
+                screenshot_count += len(list(sub.glob('*.png'))) + len(list(sub.glob('*.jpg')))
+            elif 'audio' in name_lower:
+                audio_files = list(sub.glob('*.wav')) + list(sub.glob('*.mp3'))
+
+        self.ma_screenshots_label.setText(
+            f'Screenshots: {screenshot_count} captured' if screenshot_count else 'Screenshots: None'
+        )
+
+        if audio_files:
+            total_mb = sum(f.stat().st_size for f in audio_files) / (1024 * 1024)
+            formats = ', '.join(set(f.suffix.upper().lstrip('.') for f in audio_files))
+            self.ma_audio_label.setText(f'Audio: {len(audio_files)} file(s) — {total_mb:.1f} MB ({formats})')
+        else:
+            self.ma_audio_label.setText('Audio: No recordings')
+
+    def _ma_init_qa_engine(self, meeting_dir: Path):
+        """Initialize a new QA engine for the selected meeting (isolated context)."""
+        try:
+            from .ai_pipeline.qa_engine import QAEngine
+            self._ma_qa_engine = QAEngine(meeting_folder=meeting_dir)
+            self.ma_send_btn.setEnabled(True)
+            self.ma_clear_chat_btn.setEnabled(True)
+
+            # Load existing chat history into the internal message list
+            self._ma_chat_messages.clear()
+            if self._ma_qa_engine.chat_history:
+                for msg in self._ma_qa_engine.chat_history:
+                    self._ma_chat_messages.append({
+                        'role': msg.get('role', 'user'),
+                        'content': msg.get('content', ''),
+                    })
+                self._ma_render_chat()
+            else:
+                if self._ma_qa_engine.has_data:
+                    self._ma_render_welcome()
+                else:
+                    self._ma_render_system_msg(
+                        'No transcript or summary data available for this meeting. '
+                        'The AI pipeline may not have been enabled during this session.'
+                    )
+                    self.ma_send_btn.setEnabled(False)
+
+        except ImportError as e:
+            self._ma_render_system_msg(f'QA Engine not available: {e}')
+            self.ma_send_btn.setEnabled(False)
+            self._ma_qa_engine = None
+        except Exception as e:
+            self._ma_render_system_msg(f'Error initializing QA engine: {e}')
+            self.ma_send_btn.setEnabled(False)
+            self._ma_qa_engine = None
+
+    def _ma_send_question(self):
+        """Send a question to the Q&A chatbot."""
+        question = self.ma_chat_input.text().strip()
+        if not question or not self._ma_qa_engine:
+            return
+
+        # Add user message to list and render
+        self._ma_chat_messages.append({'role': 'user', 'content': question})
+        self.ma_chat_input.clear()
+
+        # Show thinking state
+        self._ma_is_thinking = True
+        self._ma_render_chat()
+
+        # Disable input while processing
+        self.ma_send_btn.setEnabled(False)
+        self.ma_chat_input.setEnabled(False)
+
+        # Process in background thread
+        qa_thread = threading.Thread(
+            target=self._ma_qa_worker,
+            args=(question,),
+            daemon=True,
+        )
+        qa_thread.start()
+
+    def _ma_qa_worker(self, question: str):
+        """Background worker for Q&A generation."""
+        try:
+            print(f"[QA Worker] Asking: {question[:80]}...")
+            answer = self._ma_qa_engine.ask(question)
+            answer = answer or 'No answer generated.'
+            print(f"[QA Worker] Answer received: {answer[:80]}...")
+            self._qa_answer_signal.emit(answer)
+        except Exception as e:
+            print(f"[QA Worker] EXCEPTION: {e}")
+            import traceback
+            traceback.print_exc()
+            self._qa_answer_signal.emit(f'Error: {e}')
+
+    def _ma_display_answer(self, answer: str):
+        """Display the Q&A answer on the main thread (called via signal)."""
+        try:
+            self._ma_is_thinking = False
+            self._ma_chat_messages.append({
+                'role': 'assistant',
+                'content': answer,
+            })
+            self._ma_render_chat()
+        except Exception as e:
+            print(f"[QA Display] Render error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Re-enable input
+        self.ma_send_btn.setEnabled(True)
+        self.ma_chat_input.setEnabled(True)
+        self.ma_chat_input.setFocus()
+
+    def _ma_clear_chat(self):
+        """Clear Q&A chat history for the current meeting."""
+        reply = QMessageBox.question(
+            self, 'Clear Chat',
+            'Clear the Q&A chat history for this meeting?',
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            if self._ma_qa_engine:
+                self._ma_qa_engine.clear_history()
+            self._ma_chat_messages.clear()
+            self._ma_render_welcome()
+
+    # ── Chat Rendering Helpers ──
+
+    def _ma_render_welcome(self):
+        """Render the welcome message in the chat display."""
+        t = get_theme(self._current_theme)
+        self.ma_chat_display.setHtml(f"""
+            <div style="text-align:center; padding:40px 20px; color:{t['text_muted']}; font-family:'Segoe UI',sans-serif;">
+                <div style="font-size:28px; margin-bottom:8px;">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="{t['primary']}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                </div>
+                <div style="font-size:15px; font-weight:600; color:{t['text_primary']}; margin-bottom:4px;">AI Meeting Assistant</div>
+                <div style="font-size:12px; line-height:1.5;">Ask any question about this meeting.<br/>The AI will answer using <b>only</b> this meeting's content.</div>
+            </div>
+        """)
+
+    def _ma_render_system_msg(self, msg: str):
+        """Render a system/error message."""
+        t = get_theme(self._current_theme)
+        self.ma_chat_display.setHtml(f"""
+            <div style="text-align:center; padding:40px 20px; color:{t['text_muted']}; font-family:'Segoe UI',sans-serif;">
+                <div style="font-size:13px;">{msg}</div>
+            </div>
+        """)
+
+    def _ma_render_chat(self):
+        """Re-render the full chat from the internal message list."""
+        t = get_theme(self._current_theme)
+        html_parts = [f'<div style="font-family:\'Segoe UI\',sans-serif; font-size:13px; color:{t["text_primary"]};">']
+
+        for msg in self._ma_chat_messages:
+            role = msg['role']
+            content = msg['content']
+            if role == 'user':
+                html_parts.append(self._ma_render_user_bubble(content, t))
+            else:
+                html_parts.append(self._ma_render_ai_bubble(content, t))
+
+        # Show thinking indicator
+        if self._ma_is_thinking:
+            html_parts.append(self._ma_render_thinking_bubble(t))
+
+        html_parts.append('</div>')
+        self.ma_chat_display.setHtml(''.join(html_parts))
+
+        # Scroll to bottom
+        QTimer.singleShot(50, lambda: self.ma_chat_display.verticalScrollBar().setValue(
+            self.ma_chat_display.verticalScrollBar().maximum()
+        ))
+
+    def _ma_render_user_bubble(self, content: str, t: dict) -> str:
+        """Render a user message bubble (right-aligned)."""
+        escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return f"""
+            <div style="display:flex; justify-content:flex-end; margin:8px 0;">
+                <table width="100%"><tr><td width="20%"></td><td>
+                    <div style="background:{t['primary']}; color:#ffffff;
+                                padding:10px 14px; border-radius:12px 12px 2px 12px;
+                                font-size:13px; line-height:1.5; text-align:right;">
+                        {escaped}
+                    </div>
+                    <div style="text-align:right; font-size:10px; color:{t['text_muted']};
+                                margin-top:2px; padding-right:4px;">You</div>
+                </td></tr></table>
+            </div>
+        """
+
+    def _ma_render_ai_bubble(self, content: str, t: dict) -> str:
+        """Render an AI message bubble (left-aligned) with markdown support."""
+        rendered = self._md_to_html(content, t)
+        return f"""
+            <div style="margin:8px 0;">
+                <table width="100%"><tr><td>
+                    <div style="background:{t['surface_container_high']};
+                                padding:10px 14px; border-radius:12px 12px 12px 2px;
+                                border-left:3px solid {t['primary']};
+                                font-size:13px; line-height:1.6;">
+                        {rendered}
+                    </div>
+                    <div style="font-size:10px; color:{t['text_muted']};
+                                margin-top:2px; padding-left:4px;">AI Assistant</div>
+                </td><td width="20%"></td></tr></table>
+            </div>
+        """
+
+    def _ma_render_thinking_bubble(self, t: dict) -> str:
+        """Render a thinking/loading indicator."""
+        return f"""
+            <div style="margin:8px 0;">
+                <table width="100%"><tr><td>
+                    <div style="background:{t['surface_container_high']};
+                                padding:10px 14px; border-radius:12px 12px 12px 2px;
+                                border-left:3px solid {t['primary']};
+                                font-size:13px; color:{t['text_muted']}; font-style:italic;">
+                        Thinking...
+                    </div>
+                </td><td width="20%"></td></tr></table>
+            </div>
+        """
+
+    @staticmethod
+    def _md_to_html(text: str, t: dict) -> str:
+        """Convert markdown text to styled HTML for chat display."""
+        if not text:
+            return ''
+
+        # Escape HTML first
+        text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        # Code blocks (```...```)
+        text = re.sub(
+            r'```(.*?)```',
+            lambda m: f'<div style="background:{t["surface_container"]};padding:8px 10px;'
+                      f'border-radius:6px;font-family:Consolas,monospace;font-size:12px;'
+                      f'margin:6px 0;white-space:pre-wrap;">{m.group(1).strip()}</div>',
+            text, flags=re.DOTALL
+        )
+
+        # Inline code (`...`)
+        text = re.sub(
+            r'`([^`]+)`',
+            lambda m: f'<code style="background:{t["surface_container"]};padding:1px 5px;'
+                      f'border-radius:3px;font-family:Consolas,monospace;font-size:12px;">{m.group(1)}</code>',
+            text
+        )
+
+        # Bold (**...**)
+        text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+        # Italic (*...*)
+        text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+
+        # Headers (### ... , ## ... , # ...)
+        text = re.sub(r'^### (.+)$', lambda m: f'<div style="font-size:13px;font-weight:700;margin:8px 0 4px;">{m.group(1)}</div>', text, flags=re.MULTILINE)
+        text = re.sub(r'^## (.+)$', lambda m: f'<div style="font-size:14px;font-weight:700;margin:10px 0 4px;">{m.group(1)}</div>', text, flags=re.MULTILINE)
+        text = re.sub(r'^# (.+)$', lambda m: f'<div style="font-size:15px;font-weight:700;margin:12px 0 4px;">{m.group(1)}</div>', text, flags=re.MULTILINE)
+
+        # Bullet lists (- item or * item)
+        text = re.sub(
+            r'^[\-\*] (.+)$',
+            lambda m: f'<div style="padding-left:12px;margin:2px 0;">&#8226; {m.group(1)}</div>',
+            text, flags=re.MULTILINE
+        )
+
+        # Numbered lists (1. item)
+        text = re.sub(
+            r'^(\d+)\. (.+)$',
+            lambda m: f'<div style="padding-left:12px;margin:2px 0;">{m.group(1)}. {m.group(2)}</div>',
+            text, flags=re.MULTILINE
+        )
+
+        # Line breaks
+        text = text.replace('\n\n', '<br/><br/>')
+        text = text.replace('\n', '<br/>')
+
+        return text
+
+    def _ma_export_pdf(self):
+        """Export the current meeting's summary as PDF."""
+        meeting_path = self.ma_meeting_combo.currentData()
+        if not meeting_path:
+            return
+
+        meeting_dir = Path(meeting_path)
+        chatlog_dirs = sorted(
+            [d for d in meeting_dir.iterdir() if d.is_dir() and 'chatlog' in d.name.lower()],
+            key=lambda d: d.stat().st_mtime, reverse=True,
+        )
+        if not chatlog_dirs:
+            QMessageBox.warning(self, 'Error', 'No chatlog directory found.')
+            return
+
+        summary_path = chatlog_dirs[0] / 'meeting_summary.json'
+        if not summary_path.exists():
+            QMessageBox.warning(self, 'Error', 'No summary file found. Generate a summary first.')
+            return
+
+        try:
+            from .ai_pipeline.summary_engine import SummaryEngine
+            from .ai_pipeline.groq_client import GroqClient
+            from .ai_pipeline.llm_router import LLMRouter
+
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+
+            engine = SummaryEngine(llm_router=LLMRouter(groq_client=GroqClient()))
+            pdf_path = engine.export_pdf(summary, chatlog_dirs[0])
+
+            if pdf_path and pdf_path.exists():
+                QMessageBox.information(self, 'PDF Exported', f'Summary PDF saved:\n{pdf_path}')
+                os.startfile(str(pdf_path))
+            else:
+                QMessageBox.warning(self, 'Error', 'Failed to export PDF.')
+
+        except ImportError:
+            QMessageBox.warning(self, 'Missing Dependency', 'Install fpdf2: pip install fpdf2')
+        except Exception as e:
+            QMessageBox.warning(self, 'Error', f'PDF export failed: {e}')
+
+    def _ma_regenerate_summary(self):
+        """Regenerate summary for the selected meeting."""
+        meeting_path = self.ma_meeting_combo.currentData()
+        if not meeting_path:
+            return
+
+        meeting_dir = Path(meeting_path)
+        chatlog_dirs = [d for d in meeting_dir.iterdir() if d.is_dir() and 'chatlog' in d.name.lower()]
+        if not chatlog_dirs:
+            QMessageBox.warning(self, 'Error', 'No chatlog directory found.')
+            return
+
+        transcript_path = chatlog_dirs[0] / 'ai_transcript.json'
+        if not transcript_path.exists():
+            QMessageBox.warning(self, 'Error', 'No transcript file found for this meeting.')
+            return
+
+        reply = QMessageBox.question(
+            self, 'Regenerate Summary',
+            'This will regenerate the meeting summary using AI.\nContinue?',
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.ma_summary_text.setPlainText('Generating summary... Please wait.')
+        self.ma_regen_btn.setEnabled(False)
+
+        meeting_name = meeting_dir.name.replace('_', ' ')
+        regen_thread = threading.Thread(
+            target=self._ma_regen_worker,
+            args=(transcript_path, chatlog_dirs[0], meeting_name),
+            daemon=True,
+        )
+        regen_thread.start()
+
+    def _ma_regen_worker(self, transcript_path: Path, output_dir: Path, meeting_name: str):
+        """Background worker for summary regeneration."""
+        try:
+            from .ai_pipeline.summary_engine import SummaryEngine
+            from .ai_pipeline.groq_client import GroqClient
+            from .ai_pipeline.llm_router import LLMRouter
+
+            transcript_text = SummaryEngine.load_transcript_from_file(transcript_path)
+            if not transcript_text:
+                QTimer.singleShot(0, lambda: self._ma_regen_complete(False, 'Transcript too short.'))
+                return
+
+            groq_client = GroqClient()
+            llm_router = LLMRouter(groq_client=groq_client)
+            engine = SummaryEngine(llm_router=llm_router)
+
+            summary = engine.generate(transcript_text, meeting_name=meeting_name)
+            if not summary:
+                QTimer.singleShot(0, lambda: self._ma_regen_complete(False, 'LLM summary generation failed.'))
+                return
+
+            engine.save_summary(summary, output_dir)
+            engine.export_pdf(summary, output_dir)
+
+            QTimer.singleShot(0, lambda: self._ma_regen_complete(True, ''))
+
+        except Exception as e:
+            QTimer.singleShot(0, lambda: self._ma_regen_complete(False, str(e)))
+
+    def _ma_regen_complete(self, success: bool, error_msg: str):
+        """Handle summary regeneration completion on the main thread."""
+        self.ma_regen_btn.setEnabled(True)
+        if success:
+            # Reload the summary display
+            meeting_path = self.ma_meeting_combo.currentData()
+            if meeting_path:
+                self._ma_load_summary(Path(meeting_path))
+            QMessageBox.information(self, 'Summary Generated', 'Meeting summary has been regenerated successfully!')
+        else:
+            self.ma_summary_text.setPlainText(f'Summary generation failed: {error_msg}')
+            QMessageBox.warning(self, 'Error', f'Summary generation failed:\n{error_msg}')
+
+    def _ma_open_folder(self):
+        """Open the selected meeting's folder in file explorer."""
+        meeting_path = self.ma_meeting_combo.currentData()
+        if meeting_path and Path(meeting_path).exists():
+            os.startfile(meeting_path)
+
     def create_settings_tab(self):
         """Create the settings tab with premium design."""
         scroll = QScrollArea()
@@ -1094,6 +1698,47 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         layout.setContentsMargins(12, 12, 12, 24)
         
+        # === Appearance Section ===
+        appearance_group = QGroupBox('Appearance')
+        appearance_layout = QVBoxLayout()
+        appearance_layout.setSpacing(12)
+        appearance_layout.setContentsMargins(16, 16, 16, 16)
+
+        theme_desc = QLabel('Switch between Light and Dark mode')
+        theme_desc.setObjectName('sectionDesc')
+        appearance_layout.addWidget(theme_desc)
+
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(12)
+
+        self.theme_light_btn = QPushButton('Light Mode')
+        self.theme_light_btn.setCursor(Qt.PointingHandCursor)
+        self.theme_light_btn.setMinimumHeight(40)
+        self.theme_light_btn.setFixedWidth(160)
+        self.theme_light_btn.clicked.connect(lambda: self._switch_theme('light'))
+        theme_row.addWidget(self.theme_light_btn)
+
+        self.theme_dark_btn = QPushButton('Dark Mode')
+        self.theme_dark_btn.setCursor(Qt.PointingHandCursor)
+        self.theme_dark_btn.setMinimumHeight(40)
+        self.theme_dark_btn.setFixedWidth(160)
+        self.theme_dark_btn.clicked.connect(lambda: self._switch_theme('dark'))
+        theme_row.addWidget(self.theme_dark_btn)
+
+        theme_row.addStretch()
+
+        # Set initial state based on current theme
+        if self._current_theme == 'light':
+            self.theme_light_btn.setObjectName('themeBtnActive')
+            self.theme_dark_btn.setObjectName('themeBtn')
+        else:
+            self.theme_light_btn.setObjectName('themeBtn')
+            self.theme_dark_btn.setObjectName('themeBtnActive')
+
+        appearance_layout.addLayout(theme_row)
+        appearance_group.setLayout(appearance_layout)
+        layout.addWidget(appearance_group)
+
         # === Auth Section ===
         auth_group = QGroupBox('Authentication')
         auth_layout = QVBoxLayout()
@@ -1622,13 +2267,21 @@ class MainWindow(QMainWindow):
             # Actions
             actions_widget = QWidget()
             actions_layout = QHBoxLayout()
-            actions_layout.setContentsMargins(0, 0, 0, 0)
+            actions_layout.setContentsMargins(4, 4, 4, 4)
+            actions_layout.setSpacing(6)
             
             edit_btn = QPushButton('Edit')
+            edit_btn.setFixedHeight(28)
+            edit_btn.setCursor(Qt.PointingHandCursor)
+            edit_btn.setStyleSheet('padding: 4px 14px; font-size: 12px;')
             edit_btn.clicked.connect(lambda checked, idx=i: self.edit_meeting(idx))
             actions_layout.addWidget(edit_btn)
             
             delete_btn = QPushButton('Delete')
+            delete_btn.setObjectName('dangerBtn')
+            delete_btn.setFixedHeight(28)
+            delete_btn.setCursor(Qt.PointingHandCursor)
+            delete_btn.setStyleSheet('padding: 4px 14px; font-size: 12px;')
             delete_btn.clicked.connect(lambda checked, idx=i: self.delete_meeting(idx))
             actions_layout.addWidget(delete_btn)
             
@@ -1762,6 +2415,22 @@ class MainWindow(QMainWindow):
         """Load settings from .env file"""
         load_dotenv(self.env_file)
         
+        # Theme preference
+        saved_theme = os.getenv('APP_THEME', 'dark')
+        if saved_theme in ('light', 'dark'):
+            self._current_theme = saved_theme
+            self._apply_premium_theme()
+            # Update toggle buttons if they exist
+            if hasattr(self, 'theme_light_btn') and hasattr(self, 'theme_dark_btn'):
+                if saved_theme == 'light':
+                    self.theme_light_btn.setObjectName('themeBtnActive')
+                    self.theme_dark_btn.setObjectName('themeBtn')
+                else:
+                    self.theme_light_btn.setObjectName('themeBtn')
+                    self.theme_dark_btn.setObjectName('themeBtnActive')
+                self.theme_light_btn.setStyle(self.theme_light_btn.style())
+                self.theme_dark_btn.setStyle(self.theme_dark_btn.style())
+        
         # Meeting settings
         self.headless_checkbox.setChecked(os.getenv('HEADLESS', 'false').lower() == 'true')
         self.solo_timeout_input.setValue(int(os.getenv('SOLO_TIMEOUT_MINUTES', '8')))
@@ -1821,6 +2490,7 @@ class MainWindow(QMainWindow):
             set_key(env_path, 'GREETING_MESSAGE', self.greeting_input.text())
             set_key(env_path, 'SCREENSHOT_HASH_THRESHOLD', str(self.screenshot_threshold_input.value()))
             set_key(env_path, 'STORAGE_PATH', self.storage_path_input.text())
+            set_key(env_path, 'APP_THEME', self._current_theme)
             
             self.init_storage_folders()
             
